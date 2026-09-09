@@ -1,15 +1,14 @@
-// SINGLE public gateway — sole endpoint for all external clients.
+// SINGLE public gateway — FULLY SELF-CONTAINED (no cross-file imports).
 // Key: per-user Gemini key via Authorization: Bearer <KEY> or x-gemini-key.
-// No server-key fallback (prevents quota burn).
-import { resolvePublicUserKey, getGenAIClient } from "../../_lib";
-
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: { message: "Method not allowed", type: "invalid_request_error" } });
   }
   const startTime = Date.now();
   try {
-    const clientKey = resolvePublicUserKey(req);
+    const headerKey = (req.headers["x-gemini-key"] as string) || "";
+    const authHeader = (req.headers.authorization as string) || "";
+    const clientKey = headerKey.trim() || authHeader.replace(/^Bearer\s+/i, "").trim();
     const { messages = [], model = "gemini-2.5-flash", max_tokens = 800, temperature = 0.7 } = req.body || {};
 
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -25,7 +24,12 @@ export default async function handler(req: any, res: any) {
       });
     }
 
-    const ai = await getGenAIClient(clientKey);
+    const { GoogleGenAI } = await import("@google/genai");
+    const ai = new GoogleGenAI({
+      apiKey: clientKey,
+      httpOptions: { headers: { "User-Agent": "aistudio-build" } },
+    });
+
     let targetModel = "gemini-2.5-flash";
     if (model.includes("pro") || model.includes("r1") || model.includes("gpt-4")) {
       targetModel = "gemini-3.1-pro-preview";
