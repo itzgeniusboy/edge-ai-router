@@ -42,7 +42,15 @@ export async function sha256Hex(text: string): Promise<string> {
 }
 
 export function isValidGeminiKey(key: string): boolean {
-  return /^AIza[0-9A-Za-z\-_]{20,}$/.test(key.trim());
+  const k = key.trim();
+  // Legacy format: AIza... (~39 chars) | New AI Studio format: AQ.Ab... (~70 chars)
+  return /^(AIza[0-9A-Za-z\-_]{20,}|AQ\.[A-Za-z0-9\-_.]{40,})$/.test(k);
+}
+
+export function extractGeminiKey(text: string): string | null {
+  const cleaned = text.replace(/[\s'"`]+/g, '').trim();
+  const m = cleaned.match(/AIza[0-9A-Za-z\-_]{20,}|AQ\.[A-Za-z0-9\-_.]{40,}/);
+  return m ? m[0] : null;
 }
 
 export function getSessionUsername(): string | null {

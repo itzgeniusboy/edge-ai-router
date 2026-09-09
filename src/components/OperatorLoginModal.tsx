@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Shield, Key, User, Lock, Bot, X, Eye, EyeOff } from 'lucide-react';
-import { getUsers, saveUsers, sha256Hex, isValidGeminiKey, setSession } from '../utils/auth';
+import { getUsers, saveUsers, sha256Hex, isValidGeminiKey, extractGeminiKey, setSession } from '../utils/auth';
 
 interface OperatorLoginModalProps {
   isOpen: boolean;
@@ -33,17 +33,15 @@ export const OperatorLoginModal: React.FC<OperatorLoginModalProps> = ({
     e.preventDefault();
     setError('');
     const u = username.trim();
-    // Paste me se key dhoondh ke nikaalo: quotes/spaces/Bearer-/extra words ho tab bhi chalega
+    // Paste me se key dhoondh ke nikaalo (legacy AIza... ya new AQ.Ab... format, Bearer-/extra words ho tab bhi)
     const cleaned = geminiKey.replace(/[\s'"`]+/g, '').trim();
-    const found = cleaned.match(/AIza[0-9A-Za-z\-_]{20,}/);
-    const k = found ? found[0] : cleaned;
+    const k = extractGeminiKey(geminiKey) || cleaned;
     const peek = cleaned.length > 0 ? `'${cleaned.slice(0, 6)}...'` : '(khali)';
     if (u.length < 3) { setError('Username minimum 3 characters'); return; }
     if (password.length < 4) { setError('Password minimum 4 characters'); return; }
     if (password !== confirm) { setError('Password confirm match nahi ho raha'); return; }
-    if (!cleaned) { setError('Gemini API key dalo (aistudio.google.com → Get API Key)'); return; }
-    if (!found) { setError(`Ye Gemini key nahi lag rahi — tumne ${peek} dala (${cleaned.length} chars). aistudio.google.com se AIza... wali full key copy karo.`); return; }
-    if (!isValidGeminiKey(k)) { setError(`Key adhuri lag rahi hai (${k.length} chars, ~39 hone chahiye) — dobara full copy-paste karo.`); return; }
+    if (!cleaned) { setError('Gemini API key dalo (aistudio.google.com → Get API Key → Copy key)'); return; }
+    if (!isValidGeminiKey(k)) { setError(`Ye key poori nahi lag rahi — tumne ${peek} dala (${cleaned.length} chars). AI Studio me 'Copy key' button se full key copy karo.`); return; }
     setBusy(true);
     try {
       const users = getUsers();
@@ -133,7 +131,7 @@ export const OperatorLoginModal: React.FC<OperatorLoginModalProps> = ({
             <div className="space-y-1.5">
               <label className="text-[11px] text-neutral-400 uppercase flex items-center gap-1.5"><Key className="w-3.5 h-3.5 text-emerald-400" /><span>Gemini API Key *</span></label>
               <div className="relative">
-                <input type={showKey ? 'text' : 'password'} value={geminiKey} onChange={(e) => setGeminiKey(e.target.value)} placeholder="AIzaSy... (aistudio.google.com)" className="w-full bg-neutral-950 border border-neutral-700 px-3 py-2 pr-9 text-neutral-100 placeholder-neutral-600 focus:border-emerald-500 focus:outline-none text-xs" />
+                <input type={showKey ? 'text' : 'password'} value={geminiKey} onChange={(e) => setGeminiKey(e.target.value)} placeholder="Copy key se paste karo (AIza... / AQ.Ab...)" className="w-full bg-neutral-950 border border-neutral-700 px-3 py-2 pr-9 text-neutral-100 placeholder-neutral-600 focus:border-emerald-500 focus:outline-none text-xs" />
                 <button type="button" onClick={() => setShowKey(!showKey)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-white">{showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}</button>
               </div>
               <p className="text-[10px] text-neutral-500 font-sans">aistudio.google.com → Get API Key → yaha paste karo. Ye key sirf tumhare browser me rahegi.</p>
