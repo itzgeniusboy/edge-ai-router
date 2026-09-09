@@ -18,6 +18,7 @@ import { INITIAL_PROVIDERS, INITIAL_ENDPOINTS, INITIAL_FALLBACK_CHAIN, INITIAL_D
 import { Provider, Endpoint, RoutingPolicy, RoutingDecision, WatchdogEvent } from './types/router';
 import { EdgeRouterEngine } from './services/edgeRouterEngine';
 import { AutonomousWatchdogService } from './services/autonomousWatchdog';
+import { getSessionUsername, setSession, clearSession } from './utils/auth';
 
 export default function App() {
   // Persistence in local edge cache with smart migration for new providers
@@ -161,14 +162,44 @@ export default function App() {
   const [editingEndpoint, setEditingEndpoint] = useState<Endpoint | null>(null);
   const [isAddProviderOpen, setIsAddProviderOpen] = useState(false);
 
-  // Operator Authentication & Autonomous Copilot state
+  // Operator Authentication & Autonomous Copilot state (single-gateway, per-user key, strict gate)
+  const [loggedUser, setLoggedUser] = useState<string | null>(() => {
+    try {
+      // One-time migration: old multi-provider demo data -> single Gemini gateway
+      if (localStorage.getItem('er_data_version') !== 'v2-single') {
+        localStorage.removeItem('er_providers');
+        localStorage.removeItem('er_endpoints');
+        localStorage.setItem('er_fallback_chain', JSON.stringify(INITIAL_FALLBACK_CHAIN));
+        localStorage.setItem('er_data_version', 'v2-single');
+      }
+      return getSessionUsername();
+    } catch {
+      return null;
+    }
+  });
   const [operatorUsername, setOperatorUsername] = useState<string>(() => {
-    return localStorage.getItem('er_operator_username') || 'operator';
+    return getSessionUsername() || localStorage.getItem('er_operator_username') || '';
   });
   const [userGeminiKey, setUserGeminiKey] = useState<string>(() => {
-    return localStorage.getItem('er_gemini_key') || '';
+    try {
+      const sess = getSessionUsername();
+      if (sess) {
+        const users = JSON.parse(localStorage.getItem('er_users') || '[]');
+        const found = users.find((x: any) => x.username === sess);
+        if (found?.geminiKey) return found.geminiKey;
+      }
+      return localStorage.getItem('er_gemini_key') || '';
+    } catch {
+      return '';
+    }
   });
-  const [isLoginOpen, setIsLoginOpen] = useState(false);
+  const [isLoginOpen, setIsLoginOpen] = useState(() => {
+    try {
+      return !getSessionUsername();
+    } catch {
+      return true;
+    }
+  });
   const [isCopilotOpen, setIsCopilotOpen] = useState(false);
 
   // Autonomous Self-Driving Watchdog State
@@ -197,11 +228,25 @@ export default function App() {
   });
 
   const handleLoginSuccess = (username: string, key: string) => {
+    setLoggedUser(username);
     setOperatorUsername(username);
     setUserGeminiKey(key);
-    localStorage.setItem('er_operator_username', username);
-    localStorage.setItem('er_gemini_key', key);
-    setIsCopilotOpen(true);
+    try {
+      setSession(username);
+      localStorage.setItem('er_gemini_key', key);
+    } catch { /* ignore */ }
+    setIsLoginOpen(false);
+  };
+
+  const handleLogout = () => {
+    try {
+      clearSession();
+    } catch { /* ignore */ }
+    setLoggedUser(null);
+    setOperatorUsername('');
+    setUserGeminiKey('');
+    setIsLoginOpen(true);
+    setIsCopilotOpen(false);
   };
 
   // Sync state to local edge storage
@@ -453,6 +498,20 @@ export default function App() {
   ).length;
   const totalEndpointsCount = endpoints.filter((ep) => ep.providerId === activeProvider.id).length;
 
+  if (!loggedUser) {
+    return (
+      <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col items-center justify-center p-6 font-mono">
+        <div className="max-w-md w-full bg-neutral-900 border border-neutral-700 p-6 space-y-4 text-center">
+          <div className="text-xs tracking-widest text-emerald-400">SINGLE GATEWAY // LOGIN REQUIRED</div>
+          <h1 className="text-xl font-bold text-white uppercase">Edge Router Locked</h1>
+          <p className="text-xs text-neutral-400 font-sans leading-relaxed">Pehle <strong>Create Account</strong> karo (username + password + Gemini key), fir 1 endpoint <strong>/api/v1/chat/completions</strong> + tumhari key se pura system chalega.</p>
+          <button onClick={() => setIsLoginOpen(true)} className="w-full py-2.5 bg-white text-black font-bold uppercase text-xs">Login / Create Account</button>
+        </div>
+        <OperatorLoginModal isOpen={isLoginOpen} onClose={() => {}} onLoginSuccess={handleLoginSuccess} currentUsername={operatorUsername} currentGeminiKey={userGeminiKey} />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col selection:bg-neutral-200 selection:text-neutral-950 bg-grid-texture relative w-full max-w-full overflow-x-hidden">
       {/* Sticky Glass Navbar */}
@@ -551,6 +610,7 @@ export default function App() {
               routingPolicy={routingPolicy}
               fallbackChain={fallbackChain}
               onImportConfig={handleImportConfig}
+              userGeminiKey={userGeminiKey}
             />
           )}
         </div>
@@ -561,14 +621,17 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4">
           <div className="flex flex-wrap items-center justify-center sm:justify-start gap-1.5 sm:gap-2">
             <span className="font-bold text-neutral-400 uppercase">[ER] EDGE ROUTER</span>
-            <span>— Serverless Multi-Region API Routing</span>
+            <span>— Single Gateway • {loggedUser ? `Logged: ${loggedUser}` : ''}</span>
+            {loggedUser && (
+              <button onClick={handleLogout} className="ml-2 px-2 py-1 border border-neutral-700 text-neutral-300 hover:text-white text-[10px] uppercase">Logout</button>
+            )}
           </div>
           <div className="flex flex-wrap items-center justify-center sm:justify-end gap-2 sm:gap-4 text-[10px] sm:text-[11px] text-neutral-400">
-            <span>MULTI-REGION REDUNDANCY</span>
+            <span>SINGLE ENDPOINT</span>
             <span>•</span>
-            <span>SUB-MILLISECOND INGRESS</span>
+            <span>PER-USER KEY</span>
             <span>•</span>
-            <span>EDGE CACHE ACCELERATED</span>
+            <span>/api/v1/chat/completions</span>
           </div>
         </div>
       </footer>

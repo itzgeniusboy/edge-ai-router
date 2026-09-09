@@ -29,6 +29,7 @@ interface WorkerExporterProps {
   routingPolicy: RoutingPolicy;
   fallbackChain?: string[];
   onImportConfig: (data: { providers?: Provider[]; endpoints?: Endpoint[] }) => void;
+  userGeminiKey?: string;
 }
 
 export const WorkerExporter: React.FC<WorkerExporterProps> = ({
@@ -38,44 +39,15 @@ export const WorkerExporter: React.FC<WorkerExporterProps> = ({
   routingPolicy,
   fallbackChain = [],
   onImportConfig,
+  userGeminiKey = '',
 }) => {
   const [copiedType, setCopiedType] = useState<string | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState<'curl' | 'python' | 'node' | 'opencode' | 'nextjs'>('python');
-  const [proxyModel, setProxyModel] = useState<'auto-free-best' | 'fastest-free' | 'smartest-reasoning' | string>('auto-free-best');
+  const [proxyModel, setProxyModel] = useState<string>('gemini-2.0-flash');
 
-  // Edge Proxy Master API Key State (persisted locally so it remains constant across sessions)
-  const [proxyApiKey, setProxyApiKey] = useState<string>(() => {
-    try {
-      const saved = localStorage.getItem('edge_router_proxy_key');
-      if (saved && saved.startsWith('sk-er-live-')) return saved;
-    } catch (_) {}
-
-    // Cryptographically secure 32-character hex key
-    const rand = Array.from(crypto.getRandomValues(new Uint8Array(16)))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
-    const initialKey = `sk-er-live-${rand}`;
-    try {
-      localStorage.setItem('edge_router_proxy_key', initialKey);
-    } catch (_) {}
-    return initialKey;
-  });
-
+  // SINGLE-GATEWAY: key = logged-in user ki Gemini key (signup wali). Koi nakli sk-er key nahi.
+  const proxyApiKey = userGeminiKey || '';
   const [showApiKey, setShowApiKey] = useState(false);
-  const [justRegenerated, setJustRegenerated] = useState(false);
-
-  const handleGenerateNewKey = () => {
-    const rand = Array.from(crypto.getRandomValues(new Uint8Array(16)))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
-    const newKey = `sk-er-live-${rand}`;
-    setProxyApiKey(newKey);
-    try {
-      localStorage.setItem('edge_router_proxy_key', newKey);
-    } catch (_) {}
-    setJustRegenerated(true);
-    setTimeout(() => setJustRegenerated(false), 3000);
-  };
 
   const providerEndpoints = endpoints.filter(
     (ep) => ep.providerId === activeProvider.id && ep.enabled
@@ -87,19 +59,26 @@ export const WorkerExporter: React.FC<WorkerExporterProps> = ({
     setTimeout(() => setCopiedType(null), 2000);
   };
 
-  const universalBaseUrl = 'https://proxy.edgeroute.workers.dev/v1';
+  // Real single endpoint: isi Vercel deployment ka /api/v1 (zero-setup, GitHub -> Vercel direct)
+  const universalBaseUrl = (() => {
+    try {
+      if (typeof window !== 'undefined' && window.location?.origin?.startsWith('http')) {
+        return `${window.location.origin}/api/v1`;
+      }
+    } catch { /* ignore */ }
+    return 'https://your-app.vercel.app/api/v1';
+  })();
+  const fullEndpoint = `${universalBaseUrl}/chat/completions`;
 
-  // Client code snippets for universal BaseURL with real generated API Key
+  // Client snippets for SINGLE endpoint + per-user Gemini key
+  const displayKey = proxyApiKey || 'AIzaSy...tumhari-signup-wali-key';
   const codeSnippets: Record<'curl' | 'python' | 'node' | 'opencode' | 'nextjs', string> = {
-    curl: `curl -X POST "${universalBaseUrl}/chat/completions" \\
+    curl: `curl -X POST "${fullEndpoint}" \\
   -H "Content-Type: application/json" \\
-  -H "Authorization: Bearer ${proxyApiKey}" \\
-  -H "X-Route-Policy: ${routingPolicy}" \\
-  -H "X-Auto-Fallback: true" \\
+  -H "Authorization: Bearer ${displayKey}" \\
   -d '{
     "model": "${proxyModel}",
     "messages": [
-      {"role": "system", "content": "You are routed via Edge Router Load Balancer."},
       {"role": "user", "content": "Hello! Explain quantum computing in 2 sentences."}
     ],
     "temperature": 0.7
@@ -107,44 +86,35 @@ export const WorkerExporter: React.FC<WorkerExporterProps> = ({
 
     python: `from openai import OpenAI
 
-# 1-Click Universal BaseURL with auto free-tier cascading
+# Single gateway + tumhari Gemini key (signup wali)
 client = OpenAI(
     base_url="${universalBaseUrl}",
-    api_key="${proxyApiKey}",
-    default_headers={
-        "X-Route-Policy": "${routingPolicy}",
-        "X-Auto-Fallback": "true"
-    }
+    api_key="${displayKey}",
 )
 
 response = client.chat.completions.create(
-    model="${proxyModel}",  # Auto routes across Gemini -> Cerebras -> SiliconFlow -> Groq
+    model="${proxyModel}",
     messages=[
         {"role": "user", "content": "How do edge distributed systems handle failovers?"}
     ],
     temperature=0.7,
 )
 
-print(response.choices[0].message.content)
-print(f"Routed through provider: {response._response.headers.get('x-edge-provider')}")`,
+print(response.choices[0].message.content)`,
 
     node: `import OpenAI from "openai";
 
-// Drop-in replacement for OpenAI SDK with your generated Edge Key
+// Single gateway + tumhari Gemini key
 const client = new OpenAI({
   baseURL: "${universalBaseUrl}",
-  apiKey: process.env.EDGE_ROUTER_KEY || "${proxyApiKey}",
-  defaultHeaders: {
-    "X-Route-Policy": "${routingPolicy}",
-    "X-Auto-Fallback": "true",
-  },
+  apiKey: "${displayKey}",
 });
 
 async function main() {
   const completion = await client.chat.completions.create({
-    model: "${proxyModel}", // 'auto-free-best' or '${activeProvider.models[0] || 'gemini-2.0-flash'}'
+    model: "${proxyModel}",
     messages: [
-      { role: "user", content: "Summarize distributed zero-overhead edge routing." }
+      { role: "user", content: "Summarize edge routing." }
     ],
   });
 
@@ -153,52 +123,26 @@ async function main() {
 
 main();`,
 
-    opencode: `# OpenCode / Cursor / LiteLLM Configuration (.env)
-# Drop-in OpenAI-compatible provider with generated Edge API key
-
-OPENAI_API_BASE="${universalBaseUrl}"
+    opencode: `# OpenCode / Cursor (.env) — single endpoint + tumhari key
 OPENAI_BASE_URL="${universalBaseUrl}"
-OPENAI_API_KEY="${proxyApiKey}"
+OPENAI_API_KEY="${displayKey}"
+DEFAULT_MODEL="${proxyModel}"`,
 
-# Models supported:
-# - auto-free-best (Default: selects highest quota free provider)
-# - fastest-free (Cerebras / Groq LPU sub-15ms)
-# - smartest-reasoning (DeepSeek-R1 / Gemini 2.0 Flash)
-# - ${activeProvider.models[0] || 'gemini-2.0-flash'}
-DEFAULT_MODEL="${proxyModel}"
-
-# LiteLLM Proxy / Router config.yaml snippet:
-# model_list:
-#   - model_name: free-router
-#     litellm_params:
-#       model: openai/${proxyModel}
-#       api_base: ${universalBaseUrl}
-#       api_key: "${proxyApiKey}"`,
-
-    nextjs: `// Next.js App Router (app/api/chat/route.ts) with Vercel AI SDK
+    nextjs: `// Next.js route — single gateway
 import { createOpenAI } from "@ai-sdk/openai";
 import { streamText } from "ai";
 
-// Universal Edge Router Provider
 const edgeRouter = createOpenAI({
   baseURL: "${universalBaseUrl}",
-  apiKey: process.env.EDGE_ROUTER_KEY || "${proxyApiKey}",
-  headers: {
-    "X-Route-Policy": "${routingPolicy}",
-    "X-Auto-Fallback": "true",
-  },
+  apiKey: "${displayKey}",
 });
-
-export const runtime = "edge"; // Run directly on Vercel Edge Network
 
 export async function POST(req: Request) {
   const { messages } = await req.json();
-
   const result = streamText({
     model: edgeRouter("${proxyModel}"),
     messages,
   });
-
   return result.toDataStreamResponse();
 }`,
   };
@@ -429,10 +373,10 @@ function selectEndpoint(nodes: RegionalEndpoint[]): RegionalEndpoint {
           <span>OPENAI-COMPATIBLE</span>
         </div>
         <h1 className="text-xl sm:text-2xl md:text-3xl font-extrabold tracking-tight text-white uppercase break-words">
-          UNIVERSAL PROXY &amp; CLIENT CODE
+          SINGLE ENDPOINT &amp; CLIENT CODE
         </h1>
         <p className="text-xs sm:text-sm text-neutral-400 font-sans max-w-3xl leading-relaxed break-words">
-          One unified endpoint for your entire application stack. Connect Cursor, OpenCode, Next.js, Python, or LangChain to <strong className="text-white break-all">https://proxy.edgeroute.workers.dev/v1</strong>. When any provider hits daily free token limits, traffic cascades to the next free API automatically.
+          1 endpoint: <strong className="text-white break-all">{fullEndpoint}</strong> — Cursor, OpenCode, Python sab isi se chalega. Key har user ki alag (signup wali Gemini key).
         </p>
       </div>
 
@@ -455,6 +399,10 @@ function selectEndpoint(nodes: RegionalEndpoint[]): RegionalEndpoint {
                 {universalBaseUrl}
               </code>
             </div>
+            <div className="mt-2 flex items-center gap-2 min-w-0 max-w-full">
+              <code className="text-[11px] sm:text-xs text-emerald-300 break-all">POST {fullEndpoint}</code>
+              <button type="button" onClick={() => copyToClipboard(fullEndpoint, 'fullendpoint')} className="text-[10px] px-2 py-1 border border-neutral-700 text-neutral-300 hover:text-white uppercase">{copiedType === 'fullendpoint' ? 'Copied' : 'Copy endpoint'}</button>
+            </div>
           </div>
 
           <button
@@ -475,22 +423,17 @@ function selectEndpoint(nodes: RegionalEndpoint[]): RegionalEndpoint {
           </button>
         </div>
 
-        {/* Row 2: Generated Proxy Master API Key */}
+        {/* Row 2: Per-user Gemini key (signup wali) */}
         <div className="border-b border-neutral-800 pb-4 space-y-3 min-w-0 max-w-full">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-neutral-500 uppercase tracking-widest block truncate">
-                2. EDGE PROXY MASTER API KEY (AUTHORIZATION)
+                2. TUMHARI GEMINI KEY (AUTHORIZATION)
               </span>
               <span className="text-[9px] bg-emerald-950/60 text-emerald-400 border border-emerald-800/80 px-1.5 py-0.5 font-bold">
-                GATEWAY AUTH ACTIVE
+                PER-USER AUTH
               </span>
             </div>
-            {justRegenerated && (
-              <span className="text-[11px] text-emerald-400 font-sans flex items-center gap-1 animate-pulse">
-                <CheckCircle2 className="w-3.5 h-3.5" /> New Key Generated &amp; Saved
-              </span>
-            )}
           </div>
 
           <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5 bg-neutral-950 p-2.5 sm:p-3 border border-neutral-800">
@@ -498,13 +441,12 @@ function selectEndpoint(nodes: RegionalEndpoint[]): RegionalEndpoint {
               <Key className="w-4 h-4 text-emerald-400 flex-shrink-0" />
               <div className="min-w-0 flex-1">
                 <code className="text-xs sm:text-sm text-neutral-200 font-mono font-bold tracking-wide break-all select-all">
-                  {showApiKey ? proxyApiKey : `${proxyApiKey.substring(0, 10)}••••••••••••••••••••••••••••••••`}
+                  {proxyApiKey ? (showApiKey ? proxyApiKey : `${proxyApiKey.substring(0, 10)}••••••••••••••••`) : 'Login me Gemini key dalo'}
                 </code>
               </div>
             </div>
 
             <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap flex-shrink-0">
-              {/* Show / Hide */}
               <button
                 type="button"
                 onClick={() => setShowApiKey(!showApiKey)}
@@ -514,8 +456,6 @@ function selectEndpoint(nodes: RegionalEndpoint[]): RegionalEndpoint {
                 {showApiKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 <span>{showApiKey ? "HIDE" : "SHOW"}</span>
               </button>
-
-              {/* Copy Key */}
               <button
                 type="button"
                 onClick={() => copyToClipboard(proxyApiKey, 'proxykey')}
@@ -533,22 +473,11 @@ function selectEndpoint(nodes: RegionalEndpoint[]): RegionalEndpoint {
                   </>
                 )}
               </button>
-
-              {/* Generate / Rotate New Key */}
-              <button
-                type="button"
-                onClick={handleGenerateNewKey}
-                title="Generate a new Edge Router Proxy API Key"
-                className="flex items-center gap-1 px-2.5 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-emerald-400 hover:text-emerald-300 border border-neutral-750 text-xs font-mono transition-colors"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${justRegenerated ? 'animate-spin' : ''}`} />
-                <span>NEW KEY</span>
-              </button>
             </div>
           </div>
 
           <p className="text-[11px] text-neutral-400 font-sans leading-relaxed">
-            Use this key as <code className="text-neutral-200 font-mono bg-neutral-950 px-1 border border-neutral-800">OPENAI_API_KEY</code> in Cursor, OpenCode, Next.js, or as <code className="text-neutral-200 font-mono bg-neutral-950 px-1 border border-neutral-800">Authorization: Bearer &lt;key&gt;</code>. It is evaluated and validated at the edge layer before routing to backend providers.
+            Ye wahi key hai jo signup me dali thi. Ise <code className="text-neutral-200 font-mono bg-neutral-950 px-1 border border-neutral-800">Authorization: Bearer</code> me bhejo. Endpoint single hai, key har user ki alag.
           </p>
 
           {/* 1-Click Quick Setup Helpers for Terminal / .env / Cursor */}
@@ -583,29 +512,29 @@ function selectEndpoint(nodes: RegionalEndpoint[]): RegionalEndpoint {
           </div>
         </div>
 
-        {/* Model Alias Selector */}
+        {/* Model Selector (single Gemini gateway) */}
         <div className="space-y-2 pt-1 min-w-0 max-w-full">
           <div className="flex items-center justify-between text-xs">
-            <span className="text-neutral-400 text-[11px] uppercase">Select Model Preset:</span>
-            <span className="text-emerald-400 text-[11px]">Auto-failover enabled</span>
+            <span className="text-neutral-400 text-[11px] uppercase">Select Gemini Model:</span>
+            <span className="text-emerald-400 text-[11px]">Single gateway</span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs min-w-0 max-w-full">
             {[
               {
-                id: 'auto-free-best',
-                title: 'auto-free-best',
-                desc: 'Cascades through all daily free tiers with highest capacity',
+                id: 'gemini-2.0-flash',
+                title: 'gemini-2.0-flash',
+                desc: 'Fast default, single endpoint',
               },
               {
-                id: 'fastest-free',
-                title: 'fastest-free',
-                desc: 'Targets Cerebras / Groq LPU sub-15ms inference',
+                id: 'gemini-1.5-flash',
+                title: 'gemini-1.5-flash',
+                desc: 'Balanced latency + quality',
               },
               {
-                id: 'smartest-reasoning',
-                title: 'smartest-reasoning',
-                desc: 'Routes to DeepSeek-R1 / Gemini 2.0 Flash / Qwen 2.5 72B',
+                id: 'gemini-1.5-pro',
+                title: 'gemini-1.5-pro',
+                desc: 'Smartest reasoning',
               },
             ].map((preset) => (
               <button
