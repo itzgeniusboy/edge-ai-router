@@ -1,6 +1,5 @@
-// In-app Copilot TTS (per-user key via x-gemini-key / userApiKey).
-import { getGenAIClient } from "../_lib";
-
+// In-app Copilot TTS — FULLY SELF-CONTAINED (no cross-file imports).
+// Key: per-user Gemini key via x-gemini-key / userApiKey.
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -8,8 +7,14 @@ export default async function handler(req: any, res: any) {
   try {
     const { text, userApiKey } = req.body || {};
     const clientKey = (req.headers["x-gemini-key"] as string) || userApiKey;
-    const ai = await getGenAIClient(clientKey);
-    const { Modality } = await import("@google/genai");
+    if (!clientKey) {
+      return res.status(401).json({ error: "Login required: pehle signup me Gemini key dalo." });
+    }
+    const { GoogleGenAI, Modality } = await import("@google/genai");
+    const ai = new GoogleGenAI({
+      apiKey: clientKey,
+      httpOptions: { headers: { "User-Agent": "aistudio-build" } },
+    });
 
     const response = await ai.models.generateContent({
       model: "gemini-3.1-flash-tts-preview",
