@@ -43,7 +43,7 @@ export const WorkerExporter: React.FC<WorkerExporterProps> = ({
 }) => {
   const [copiedType, setCopiedType] = useState<string | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState<'curl' | 'python' | 'node' | 'opencode' | 'nextjs'>('python');
-  const [proxyModel, setProxyModel] = useState<string>('gemini-2.0-flash');
+  const [proxyModel, setProxyModel] = useState<string>('gemini-flash-latest');
 
   // SINGLE-GATEWAY: key = logged-in user ki Gemini key (signup wali). Koi nakli sk-er key nahi.
   const proxyApiKey = userGeminiKey || '';
@@ -233,14 +233,9 @@ export default {
       bodyJson = await clonedReq.json();
     } catch (_) {}
 
-    const reqModel = (bodyJson.model as string) || "auto-free-best";
+    const reqModel = (bodyJson.model as string) || "gemini-flash-latest";
+    // Single Gemini gateway: all aliases resolve to the active provider
     let targetProvider = "${activeProvider.id}";
-
-    if (reqModel === "fastest-free") {
-      targetProvider = "prov-cerebras";
-    } else if (reqModel === "smartest-reasoning") {
-      targetProvider = "prov-siliconflow";
-    }
 
     // 2. Select primary node for active provider
     let availableNodes = REGIONAL_NODES.filter(n => n.providerId === targetProvider);
@@ -522,18 +517,18 @@ function selectEndpoint(nodes: RegionalEndpoint[]): RegionalEndpoint {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs min-w-0 max-w-full">
             {[
               {
-                id: 'gemini-2.0-flash',
-                title: 'gemini-2.0-flash',
-                desc: 'Fast default, single endpoint',
+                id: 'gemini-flash-latest',
+                title: 'gemini-flash-latest',
+                desc: 'Fast default, always current',
               },
               {
-                id: 'gemini-1.5-flash',
-                title: 'gemini-1.5-flash',
-                desc: 'Balanced latency + quality',
+                id: 'gemini-3.6-flash',
+                title: 'gemini-3.6-flash',
+                desc: 'Latest generation quality',
               },
               {
-                id: 'gemini-1.5-pro',
-                title: 'gemini-1.5-pro',
+                id: 'gemini-pro-latest',
+                title: 'gemini-pro-latest',
                 desc: 'Smartest reasoning',
               },
             ].map((preset) => (

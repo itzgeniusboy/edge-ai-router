@@ -209,7 +209,7 @@ export class SmartPromptRouter {
       return {
         taskType: 'general',
         recommendedProviderSlug: 'gemini',
-        recommendedModel: 'gemini-2.5-flash',
+        recommendedModel: 'gemini-flash-latest',
         reasoning: 'Selected Gemini 2.5 Flash for optimum balance of speed, multimodal intelligence, and zero cost.',
         estimatedLatencyMs: 22,
       };

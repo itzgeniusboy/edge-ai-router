@@ -10,7 +10,7 @@ export const INITIAL_PROVIDERS: Provider[] = [
     slug: 'google-gemini',
     category: 'LLM & Multimodal',
     defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    models: ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-lite'],
+    models: ['gemini-flash-latest', 'gemini-3.6-flash', 'gemini-pro-latest', 'gemini-flash-lite-latest'],
     dailyTokenQuota: '1,500 RPD • Free',
   },
 ];
