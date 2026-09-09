@@ -1,11 +1,13 @@
 import express from "express";
 import http from "http";
 import path from "path";
-import { WebSocketServer, WebSocket } from "ws";
-import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
 import dotenv from "dotenv";
 
 dotenv.config();
+
+// NOTE (Vercel serverless): heavy SDKs (ws, @google/genai) are lazy-loaded
+// inside handlers/connections only, so module import can never crash the
+// serverless function (FUNCTION_INVOCATION_FAILED fix).
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 const app = express();
@@ -24,11 +26,12 @@ function resolvePublicUserKey(req: any): string {
 }
 
 // Helper to initialize GenAI client safely with server secret or user provided key
-function getGenAIClient(customApiKey?: string): GoogleGenAI {
+async function getGenAIClient(customApiKey?: string): Promise<any> {
   const key = customApiKey || process.env.GEMINI_API_KEY;
   if (!key) {
     throw new Error("GEMINI_API_KEY is not configured on the server and no key was provided.");
   }
+  const { GoogleGenAI } = await import("@google/genai");
   return new GoogleGenAI({
     apiKey: key,
     httpOptions: {
@@ -154,7 +157,7 @@ app.post("/api/copilot/chat", async (req, res) => {
   try {
     const { messages, currentRouterState, modelType, userApiKey } = req.body;
     const clientKey = (req.headers["x-gemini-key"] as string) || userApiKey;
-    const ai = getGenAIClient(clientKey);
+    const ai = await getGenAIClient(clientKey);
 
     let model = "gemini-3.5-flash";
     if (modelType === "complex" || modelType === "reasoning") {
@@ -198,7 +201,8 @@ app.post("/api/copilot/tts", async (req, res) => {
   try {
     const { text, userApiKey } = req.body;
     const clientKey = (req.headers["x-gemini-key"] as string) || userApiKey;
-    const ai = getGenAIClient(clientKey);
+    const ai = await getGenAIClient(clientKey);
+    const { Modality } = await import("@google/genai");
 
     const response = await ai.models.generateContent({
       model: "gemini-3.1-flash-tts-preview",
@@ -241,7 +245,7 @@ app.post("/api/router/inference", async (req, res) => {
 
     // If API key is available, execute real Gemini call
     if (clientKey) {
-      const ai = getGenAIClient(clientKey);
+      const ai = await getGenAIClient(clientKey);
       let targetModel = "gemini-2.5-flash";
       if (model.includes("pro") || model.includes("r1") || model.includes("reasoner")) {
         targetModel = "gemini-3.1-pro-preview";
@@ -305,7 +309,7 @@ app.post("/api/v1/chat/completions", async (req, res) => {
       });
     }
 
-    const ai = getGenAIClient(clientKey);
+    const ai = await getGenAIClient(clientKey);
     let targetModel = "gemini-2.5-flash";
     if (model.includes("pro") || model.includes("r1") || model.includes("gpt-4")) {
       targetModel = "gemini-3.1-pro-preview";
@@ -370,32 +374,39 @@ app.post("/api/v1/chat/completions", async (req, res) => {
   }
 });
 
-// WebSocket Server for Gemini Live API (gemini-3.1-flash-live-preview)
-const wss = new WebSocketServer({ noServer: true });
+// WebSocket Live API — long-lived servers only, never on Vercel serverless
+if (!process.env.VERCEL) {
+  initLiveSockets().catch((e) => console.error("Live socket init failed:", e));
+}
 
-server.on("upgrade", (request, socket, head) => {
-  const url = new URL(request.url || "", `http://${request.headers.host}`);
-  if (url.pathname === "/api/copilot/live") {
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit("connection", ws, request);
-    });
-  } else {
-    socket.destroy();
-  }
-});
+async function initLiveSockets() {
+  const { WebSocketServer, WebSocket } = await import("ws") as any;
+  const wss = new WebSocketServer({ noServer: true });
 
-wss.on("connection", async (clientWs: WebSocket, req) => {
-  console.log("Client connected to Gemini Live voice stream");
-  let session: any = null;
+  server.on("upgrade", (request: any, socket: any, head: any) => {
+    const url = new URL(request.url || "", `http://${request.headers.host}`);
+    if (url.pathname === "/api/copilot/live") {
+      wss.handleUpgrade(request, socket, head, (ws: any) => {
+        wss.emit("connection", ws, request);
+      });
+    } else {
+      socket.destroy();
+    }
+  });
 
-  try {
-    const url = new URL(req.url || "", `http://${req.headers.host}`);
-    const clientKey = url.searchParams.get("key") || process.env.GEMINI_API_KEY;
-    const activeProvider = url.searchParams.get("activeProvider") || "Cerebras / Groq";
-    const policy = url.searchParams.get("policy") || "lowest-latency";
-    const nodeCount = url.searchParams.get("nodeCount") || "12";
-    const fallback = url.searchParams.get("fallback") || "Cerebras -> Groq -> Gemini";
-    const ai = getGenAIClient(clientKey || undefined);
+  wss.on("connection", async (clientWs: any, req: any) => {
+    console.log("Client connected to Gemini Live voice stream");
+    let session: any = null;
+
+    try {
+      const url = new URL(req.url || "", `http://${req.headers.host}`);
+      const clientKey = url.searchParams.get("key") || process.env.GEMINI_API_KEY;
+      const activeProvider = url.searchParams.get("activeProvider") || "Cerebras / Groq";
+      const policy = url.searchParams.get("policy") || "lowest-latency";
+      const nodeCount = url.searchParams.get("nodeCount") || "12";
+      const fallback = url.searchParams.get("fallback") || "Cerebras -> Groq -> Gemini";
+      const ai = await getGenAIClient(clientKey || undefined);
+      const { Modality } = await import("@google/genai");
 
     const liveInstruction = getRouterOperatorInstruction({
       activeProvider,
@@ -415,7 +426,7 @@ wss.on("connection", async (clientWs: WebSocket, req) => {
         systemInstruction: liveInstruction,
       },
       callbacks: {
-        onmessage: (message: LiveServerMessage) => {
+        onmessage: (message: any) => {
           const audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
           if (audio && clientWs.readyState === WebSocket.OPEN) {
             clientWs.send(JSON.stringify({ audio }));
@@ -461,7 +472,8 @@ wss.on("connection", async (clientWs: WebSocket, req) => {
       clientWs.close();
     }
   }
-});
+  });
+} // end initLiveSockets (long-lived servers only)
 
 // Vite middleware / static asset serving
 async function startServer() {
