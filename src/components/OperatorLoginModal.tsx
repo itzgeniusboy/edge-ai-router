@@ -33,11 +33,14 @@ export const OperatorLoginModal: React.FC<OperatorLoginModalProps> = ({
     e.preventDefault();
     setError('');
     const u = username.trim();
-    const k = geminiKey.trim();
+    // Paste me aaye quotes/spaces/newlines auto-saaf karo (common copy mistake)
+    const k = geminiKey.replace(/[\s'"`]+/g, '').trim();
     if (u.length < 3) { setError('Username minimum 3 characters'); return; }
     if (password.length < 4) { setError('Password minimum 4 characters'); return; }
     if (password !== confirm) { setError('Password confirm match nahi ho raha'); return; }
-    if (!isValidGeminiKey(k)) { setError('Valid Gemini API key dalo (AIzaSy... aistudio.google.com se)'); return; }
+    if (!k) { setError('Gemini API key dalo (aistudio.google.com → Get API Key)'); return; }
+    if (!k.startsWith('AIza')) { setError('Ye Gemini key nahi lag rahi — key AIza... se start honi chahiye. aistudio.google.com se full key copy karo.'); return; }
+    if (!isValidGeminiKey(k)) { setError(`Key adhuri lag rahi hai (${k.length} chars, ~39 hone chahiye) — dobara full copy-paste karo.`); return; }
     setBusy(true);
     try {
       const users = getUsers();
