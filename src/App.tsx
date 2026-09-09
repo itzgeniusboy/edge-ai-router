@@ -13,12 +13,13 @@ import { WorkerExporter } from './components/WorkerExporter';
 import { EndpointModal } from './components/EndpointModal';
 import { ProviderModal } from './components/ProviderModal';
 import { OperatorLoginModal } from './components/OperatorLoginModal';
+import { ProfileModal } from './components/ProfileModal';
 import { AutonomousCopilot } from './components/AutonomousCopilot';
 import { INITIAL_PROVIDERS, INITIAL_ENDPOINTS, INITIAL_FALLBACK_CHAIN, INITIAL_DAILY_USAGES } from './data/initialData';
 import { Provider, Endpoint, RoutingPolicy, RoutingDecision, WatchdogEvent } from './types/router';
 import { EdgeRouterEngine } from './services/edgeRouterEngine';
 import { AutonomousWatchdogService } from './services/autonomousWatchdog';
-import { getSessionUsername, setSession, clearSession } from './utils/auth';
+import { getSessionUsername, setSession, clearSession, syncUserGeminiKey } from './utils/auth';
 
 export default function App() {
   // Persistence in local edge cache with smart migration for new providers
@@ -201,6 +202,7 @@ export default function App() {
     }
   });
   const [isCopilotOpen, setIsCopilotOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
 
   // Autonomous Self-Driving Watchdog State
   const [isWatchdogActive, setIsWatchdogActive] = useState<boolean>(() => {
@@ -247,6 +249,19 @@ export default function App() {
     setUserGeminiKey('');
     setIsLoginOpen(true);
     setIsCopilotOpen(false);
+    setIsProfileOpen(false);
+  };
+
+  const handleProfileUpdated = (username: string, key: string) => {
+    setLoggedUser(username);
+    setOperatorUsername(username);
+    setUserGeminiKey(key);
+  };
+
+  // Profile icon: logged-in ho to Profile kholo, nahi to Login
+  const handleOperatorClick = () => {
+    if (loggedUser) setIsProfileOpen(true);
+    else setIsLoginOpen(true);
   };
 
   // Sync state to local edge storage
@@ -452,7 +467,10 @@ export default function App() {
     );
     if (providerId === 'prov-gemini') {
       setUserGeminiKey(apiKey);
-      localStorage.setItem('er_gemini_key', apiKey);
+      try {
+        localStorage.setItem('er_gemini_key', apiKey);
+        if (loggedUser) syncUserGeminiKey(loggedUser, apiKey);
+      } catch { /* ignore */ }
     }
   };
 
@@ -531,7 +549,7 @@ export default function App() {
         activeEndpointsCount={activeEndpointsCount}
         totalEndpointsCount={totalEndpointsCount}
         operatorUsername={operatorUsername}
-        onOpenLogin={() => setIsLoginOpen(true)}
+        onOpenLogin={handleOperatorClick}
         isCopilotOpen={isCopilotOpen}
         onToggleCopilot={() => setIsCopilotOpen(!isCopilotOpen)}
         isWatchdogActive={isWatchdogActive}
@@ -663,6 +681,16 @@ export default function App() {
         currentGeminiKey={userGeminiKey}
       />
 
+      {/* Profile / Account Settings Modal (profile icon click after login) */}
+      <ProfileModal
+        isOpen={isProfileOpen}
+        onClose={() => setIsProfileOpen(false)}
+        username={operatorUsername}
+        currentGeminiKey={userGeminiKey}
+        onUpdated={handleProfileUpdated}
+        onLogout={handleLogout}
+      />
+
       {/* Autonomous AI Copilot & Voice Controller with Full Router Administrative Access */}
       <AutonomousCopilot
         isOpen={isCopilotOpen}
@@ -692,7 +720,7 @@ export default function App() {
         }}
         operatorUsername={operatorUsername}
         userGeminiKey={userGeminiKey}
-        onOpenLogin={() => setIsLoginOpen(true)}
+        onOpenLogin={handleOperatorClick}
       />
     </div>
   );
