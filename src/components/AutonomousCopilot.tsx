@@ -490,9 +490,20 @@ Aap Hindi, Hinglish ya English mein bol ya likh sakte hain!`,
         }),
       });
 
-      const data = await response.json();
+      // Server crash page (HTML/text) aaye to JSON parse na phate — pehle text padho
+      const rawText = await response.text();
+      let data: any = {};
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        throw new Error(
+          response.ok
+            ? 'Server se galat jawab aaya. Dobara try karo.'
+            : `Server error (${response.status}) — API deploy check karo, dobara try karo.`
+        );
+      }
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to communicate with AI server');
+        throw new Error(data?.error?.message || data?.error || 'Failed to communicate with AI server');
       }
 
       const replyText = data.text || 'Action acknowledged.';
