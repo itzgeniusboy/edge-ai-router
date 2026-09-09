@@ -242,7 +242,7 @@ app.post("/api/copilot/tts", async (req, res) => {
 app.post("/api/router/inference", async (req, res) => {
   const startTime = Date.now();
   try {
-    const { prompt, model = "gemini-2.5-flash", clientApiKey } = req.body;
+    const { prompt, model = "gemini-flash-latest", clientApiKey } = req.body;
     const clientKey = (req.headers["x-gemini-key"] as string) || clientApiKey || process.env.GEMINI_API_KEY;
 
     if (!prompt || typeof prompt !== "string") {
@@ -255,7 +255,7 @@ app.post("/api/router/inference", async (req, res) => {
     // If API key is available, execute real Gemini call
     if (clientKey) {
       const ai = await getGenAIClient(clientKey);
-      let targetModel = "gemini-2.5-flash";
+      let targetModel = "gemini-flash-latest";
       if (model.includes("pro") || model.includes("r1") || model.includes("reasoner")) {
         targetModel = "gemini-3.1-pro-preview";
       } else if (model.includes("lite") || model.includes("instant")) {
@@ -303,7 +303,7 @@ app.post("/api/v1/chat/completions", async (req, res) => {
   try {
     const clientKey = resolvePublicUserKey(req);
 
-    const { messages = [], model = "gemini-2.5-flash", max_tokens = 800, temperature = 0.7 } = req.body;
+    const { messages = [], model = "gemini-flash-latest", max_tokens = 800, temperature = 0.7 } = req.body;
 
     if (!Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: { message: "Invalid messages array", type: "invalid_request_error" } });
@@ -319,7 +319,7 @@ app.post("/api/v1/chat/completions", async (req, res) => {
     }
 
     const ai = await getGenAIClient(clientKey);
-    let targetModel = "gemini-2.5-flash";
+    let targetModel = "gemini-flash-latest";
     if (model.includes("pro") || model.includes("r1") || model.includes("gpt-4")) {
       targetModel = "gemini-3.1-pro-preview";
     }

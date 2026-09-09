@@ -9,7 +9,7 @@ export default async function handler(req: any, res: any) {
     const headerKey = (req.headers["x-gemini-key"] as string) || "";
     const authHeader = (req.headers.authorization as string) || "";
     const clientKey = headerKey.trim() || authHeader.replace(/^Bearer\s+/i, "").trim();
-    const { messages = [], model = "gemini-2.5-flash", max_tokens = 800, temperature = 0.7 } = req.body || {};
+    const { messages = [], model = "gemini-flash-latest", max_tokens = 800, temperature = 0.7 } = req.body || {};
 
     if (!Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: { message: "Invalid messages array", type: "invalid_request_error" } });
@@ -30,7 +30,7 @@ export default async function handler(req: any, res: any) {
       httpOptions: { headers: { "User-Agent": "aistudio-build" } },
     });
 
-    let targetModel = "gemini-2.5-flash";
+    let targetModel = "gemini-flash-latest";
     if (model.includes("pro") || model.includes("r1") || model.includes("gpt-4")) {
       targetModel = "gemini-3.1-pro-preview";
     }

@@ -6,7 +6,7 @@ export default async function handler(req: any, res: any) {
   }
   const startTime = Date.now();
   try {
-    const { prompt, model = "gemini-2.5-flash", clientApiKey } = req.body || {};
+    const { prompt, model = "gemini-flash-latest", clientApiKey } = req.body || {};
     const clientKey = (req.headers["x-gemini-key"] as string) || clientApiKey || process.env.GEMINI_API_KEY;
 
     if (!prompt || typeof prompt !== "string") {
@@ -22,7 +22,7 @@ export default async function handler(req: any, res: any) {
       httpOptions: { headers: { "User-Agent": "aistudio-build" } },
     });
 
-    let targetModel = "gemini-2.5-flash";
+    let targetModel = "gemini-flash-latest";
     if (model.includes("pro") || model.includes("r1") || model.includes("reasoner")) {
       targetModel = "gemini-3.1-pro-preview";
     } else if (model.includes("lite") || model.includes("instant")) {
