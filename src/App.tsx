@@ -1,0 +1,636 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect } from 'react';
+import { Navbar } from './components/Navbar';
+import { BentoDashboard } from './components/BentoDashboard';
+import { EdgeTester } from './components/EdgeTester';
+import { DailyQuotaTracker } from './components/DailyQuotaTracker';
+import { TelemetryView } from './components/TelemetryView';
+import { WorkerExporter } from './components/WorkerExporter';
+import { EndpointModal } from './components/EndpointModal';
+import { ProviderModal } from './components/ProviderModal';
+import { OperatorLoginModal } from './components/OperatorLoginModal';
+import { AutonomousCopilot } from './components/AutonomousCopilot';
+import { INITIAL_PROVIDERS, INITIAL_ENDPOINTS, INITIAL_FALLBACK_CHAIN, INITIAL_DAILY_USAGES } from './data/initialData';
+import { Provider, Endpoint, RoutingPolicy, RoutingDecision, WatchdogEvent } from './types/router';
+import { EdgeRouterEngine } from './services/edgeRouterEngine';
+import { AutonomousWatchdogService } from './services/autonomousWatchdog';
+
+export default function App() {
+  // Persistence in local edge cache with smart migration for new providers
+  const [providers, setProviders] = useState<Provider[]>(() => {
+    const saved = localStorage.getItem('er_providers');
+    if (!saved) return INITIAL_PROVIDERS;
+    try {
+      const parsed: Provider[] = JSON.parse(saved);
+      const existingIds = new Set(parsed.map((p) => p.id));
+      const missingInitial = INITIAL_PROVIDERS.filter((p) => !existingIds.has(p.id));
+      const updated = parsed.map((p) => {
+        const init = INITIAL_PROVIDERS.find((ip) => ip.id === p.id);
+        if (init && !p.isCustom) {
+          return {
+            ...p,
+            dailyTokenQuota: init.dailyTokenQuota || p.dailyTokenQuota,
+            models: Array.from(new Set([...init.models, ...p.models])),
+          };
+        }
+        return p;
+      });
+      return [...updated, ...missingInitial];
+    } catch {
+      return INITIAL_PROVIDERS;
+    }
+  });
+
+  const [activeProviderId, setActiveProviderId] = useState<string>(() => {
+    const saved = localStorage.getItem('er_active_provider');
+    return saved || INITIAL_PROVIDERS[0].id;
+  });
+
+  const [endpoints, setEndpoints] = useState<Endpoint[]>(() => {
+    const saved = localStorage.getItem('er_endpoints');
+    if (!saved) return INITIAL_ENDPOINTS;
+    try {
+      const parsed: Endpoint[] = JSON.parse(saved);
+      const existingIds = new Set(parsed.map((e) => e.id));
+      const missingEndpoints = INITIAL_ENDPOINTS.filter((e) => !existingIds.has(e.id));
+      return [...parsed, ...missingEndpoints];
+    } catch {
+      return INITIAL_ENDPOINTS;
+    }
+  });
+
+  const [routingPolicy, setRoutingPolicy] = useState<RoutingPolicy>(() => {
+    const saved = localStorage.getItem('er_routing_policy');
+    return (saved as RoutingPolicy) || 'failover-cascade';
+  });
+
+  const [recentDecisions, setRecentDecisions] = useState<RoutingDecision[]>(() => {
+    const saved = localStorage.getItem('er_recent_decisions');
+    if (saved) return JSON.parse(saved);
+    // Seed initial decision logs
+    return [
+      {
+        id: 'req_init_991',
+        timestamp: Date.now() - 15000,
+        providerId: 'prov-openai',
+        providerName: 'OpenAI',
+        selectedEndpointId: 'ep-oai-useast',
+        selectedEndpointName: 'US-East Primary Gateway',
+        selectedRegion: 'us-east-1',
+        policyApplied: 'failover-cascade',
+        latencyMs: 24,
+        statusCode: 200,
+        cached: false,
+        failoverAttempted: false,
+        promptSummary: 'Verify multi-region cluster status',
+        responsePayload: '{"status":"ok","latency_ms":24,"edge_pop":"iad-1"}',
+        tokensUsed: 45,
+      },
+      {
+        id: 'req_init_990',
+        timestamp: Date.now() - 45000,
+        providerId: 'prov-openai',
+        providerName: 'OpenAI',
+        selectedEndpointId: 'ep-oai-uswest',
+        selectedEndpointName: 'US-West Redundant Cluster',
+        selectedRegion: 'us-west-2',
+        policyApplied: 'failover-cascade',
+        latencyMs: 38,
+        statusCode: 200,
+        cached: false,
+        failoverAttempted: true,
+        failoverReason: 'Primary node rate-limit threshold reached. Seamless regional failover.',
+        promptSummary: 'Embedding query vector lookup',
+        responsePayload: '{"status":"ok","latency_ms":38,"failover":true}',
+        tokensUsed: 38,
+      },
+      {
+        id: 'req_init_989',
+        timestamp: Date.now() - 110000,
+        providerId: 'prov-openai',
+        providerName: 'OpenAI',
+        selectedEndpointId: 'ep-oai-eucentral',
+        selectedEndpointName: 'EU-Central Failover Node',
+        selectedRegion: 'eu-central-1',
+        policyApplied: 'lowest-latency',
+        latencyMs: 1,
+        statusCode: 200,
+        cached: true,
+        failoverAttempted: false,
+        promptSummary: 'Ping from Frankfurt edge point of presence',
+        responsePayload: '{"status":"ok","cached":true,"latency_ms":1}',
+        tokensUsed: 12,
+      },
+    ];
+  });
+
+  const [fallbackChain, setFallbackChain] = useState<string[]>(() => {
+    const saved = localStorage.getItem('er_fallback_chain');
+    if (!saved) return INITIAL_FALLBACK_CHAIN;
+    try {
+      return JSON.parse(saved);
+    } catch {
+      return INITIAL_FALLBACK_CHAIN;
+    }
+  });
+
+  const [dailyUsages, setDailyUsages] = useState<Record<string, {
+    requestsUsed: number;
+    requestsLimit: number;
+    tokensUsed: number;
+    tokensLimit: number;
+    primaryUnit: 'requests' | 'tokens';
+  }>>(() => {
+    const saved = localStorage.getItem('er_daily_usages');
+    if (!saved) return INITIAL_DAILY_USAGES;
+    try {
+      const parsed = JSON.parse(saved);
+      return { ...INITIAL_DAILY_USAGES, ...parsed };
+    } catch {
+      return INITIAL_DAILY_USAGES;
+    }
+  });
+
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'tester' | 'quota' | 'telemetry' | 'export'>('dashboard');
+  const [isHealthSweeping, setIsHealthSweeping] = useState(false);
+  const [isAddEndpointOpen, setIsAddEndpointOpen] = useState(false);
+  const [editingEndpoint, setEditingEndpoint] = useState<Endpoint | null>(null);
+  const [isAddProviderOpen, setIsAddProviderOpen] = useState(false);
+
+  // Operator Authentication & Autonomous Copilot state
+  const [operatorUsername, setOperatorUsername] = useState<string>(() => {
+    return localStorage.getItem('er_operator_username') || 'operator';
+  });
+  const [userGeminiKey, setUserGeminiKey] = useState<string>(() => {
+    return localStorage.getItem('er_gemini_key') || '';
+  });
+  const [isLoginOpen, setIsLoginOpen] = useState(false);
+  const [isCopilotOpen, setIsCopilotOpen] = useState(false);
+
+  // Autonomous Self-Driving Watchdog State
+  const [isWatchdogActive, setIsWatchdogActive] = useState<boolean>(() => {
+    const saved = localStorage.getItem('er_watchdog_active');
+    return saved !== null ? saved === 'true' : true;
+  });
+
+  const [watchdogLogs, setWatchdogLogs] = useState<WatchdogEvent[]>(() => {
+    const saved = localStorage.getItem('er_watchdog_logs');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {}
+    }
+    return [
+      {
+        id: 'wd_init_1',
+        timestamp: Date.now() - 40000,
+        type: 'ping_sweep',
+        title: 'Autonomous Mesh Initialized',
+        description: 'Watchdog active on all global regions. Auto-cascade quota protection armed at 85%.',
+        actionTaken: 'Autonomous monitoring loop engaged with 25s probe intervals.',
+      },
+    ];
+  });
+
+  const handleLoginSuccess = (username: string, key: string) => {
+    setOperatorUsername(username);
+    setUserGeminiKey(key);
+    localStorage.setItem('er_operator_username', username);
+    localStorage.setItem('er_gemini_key', key);
+    setIsCopilotOpen(true);
+  };
+
+  // Sync state to local edge storage
+  useEffect(() => {
+    localStorage.setItem('er_providers', JSON.stringify(providers));
+  }, [providers]);
+
+  useEffect(() => {
+    localStorage.setItem('er_active_provider', activeProviderId);
+  }, [activeProviderId]);
+
+  useEffect(() => {
+    localStorage.setItem('er_endpoints', JSON.stringify(endpoints));
+  }, [endpoints]);
+
+  useEffect(() => {
+    localStorage.setItem('er_routing_policy', routingPolicy);
+  }, [routingPolicy]);
+
+  useEffect(() => {
+    localStorage.setItem('er_recent_decisions', JSON.stringify(recentDecisions.slice(0, 30)));
+  }, [recentDecisions]);
+
+  useEffect(() => {
+    localStorage.setItem('er_fallback_chain', JSON.stringify(fallbackChain));
+  }, [fallbackChain]);
+
+  useEffect(() => {
+    localStorage.setItem('er_daily_usages', JSON.stringify(dailyUsages));
+  }, [dailyUsages]);
+
+  useEffect(() => {
+    localStorage.setItem('er_watchdog_active', String(isWatchdogActive));
+  }, [isWatchdogActive]);
+
+  useEffect(() => {
+    localStorage.setItem('er_watchdog_logs', JSON.stringify(watchdogLogs.slice(0, 50)));
+  }, [watchdogLogs]);
+
+  const activeProvider =
+    providers.find((p) => p.id === activeProviderId) || providers[0] || INITIAL_PROVIDERS[0];
+
+  // Autonomous Self-Driving Watchdog Loop (Every 25 seconds)
+  useEffect(() => {
+    if (!isWatchdogActive) return;
+
+    const interval = setInterval(() => {
+      const healResult = AutonomousWatchdogService.runHealthCheckAndHeal({
+        providers,
+        endpoints,
+        activeProvider,
+        fallbackChain,
+        dailyUsages,
+        routingPolicy,
+      });
+
+      if (healResult.healed) {
+        if (healResult.updatedEndpoints) {
+          setEndpoints(healResult.updatedEndpoints);
+        }
+        if (healResult.newActiveProviderId && healResult.newActiveProviderId !== activeProviderId) {
+          setActiveProviderId(healResult.newActiveProviderId);
+        }
+        if (healResult.newRoutingPolicy && healResult.newRoutingPolicy !== routingPolicy) {
+          setRoutingPolicy(healResult.newRoutingPolicy);
+        }
+        if (healResult.event) {
+          setWatchdogLogs((prev) => [healResult.event!, ...prev.slice(0, 49)]);
+        }
+      }
+    }, 25000);
+
+    return () => clearInterval(interval);
+  }, [isWatchdogActive, providers, endpoints, activeProvider, activeProviderId, fallbackChain, dailyUsages, routingPolicy]);
+
+  const handleTriggerWatchdogAudit = () => {
+    const healResult = AutonomousWatchdogService.runHealthCheckAndHeal({
+      providers,
+      endpoints,
+      activeProvider,
+      fallbackChain,
+      dailyUsages,
+      routingPolicy,
+    });
+
+    if (healResult.event) {
+      setWatchdogLogs((prev) => [healResult.event!, ...prev.slice(0, 49)]);
+    } else {
+      const sweepEvent: WatchdogEvent = {
+        id: 'wd_manual_' + Date.now(),
+        timestamp: Date.now(),
+        type: 'ping_sweep',
+        title: 'Instant Autonomous Sweep Completed',
+        description: `Verified ${endpoints.filter((e) => e.enabled).length} active nodes across ${providers.length} providers. All SLA tolerances passed.`,
+        actionTaken: 'Zero latency anomalies detected. Topology optimal.',
+      };
+      setWatchdogLogs((prev) => [sweepEvent, ...prev.slice(0, 49)]);
+    }
+
+    if (healResult.updatedEndpoints) setEndpoints(healResult.updatedEndpoints);
+    if (healResult.newActiveProviderId) setActiveProviderId(healResult.newActiveProviderId);
+    if (healResult.newRoutingPolicy) setRoutingPolicy(healResult.newRoutingPolicy);
+  };
+
+  // Usage & Quota Handlers
+  const handleUpdateUsage = (providerId: string, deltaRequests: number, deltaTokens: number) => {
+    setDailyUsages((prev) => {
+      const existing = prev[providerId] || {
+        requestsUsed: 0,
+        requestsLimit: 5000,
+        tokensUsed: 0,
+        tokensLimit: 2000000,
+        primaryUnit: 'requests' as const,
+      };
+      return {
+        ...prev,
+        [providerId]: {
+          ...existing,
+          requestsUsed: Math.min(existing.requestsLimit, existing.requestsUsed + deltaRequests),
+          tokensUsed: Math.min(existing.tokensLimit, existing.tokensUsed + deltaTokens),
+        },
+      };
+    });
+  };
+
+  const handleResetUsage = (providerId?: string) => {
+    if (providerId) {
+      setDailyUsages((prev) => {
+        const current = prev[providerId];
+        if (!current) return prev;
+        return {
+          ...prev,
+          [providerId]: {
+            ...current,
+            requestsUsed: 0,
+            tokensUsed: 0,
+          },
+        };
+      });
+    } else {
+      setDailyUsages((prev) => {
+        const reset: typeof prev = {};
+        Object.keys(prev).forEach((key) => {
+          reset[key] = {
+            ...prev[key],
+            requestsUsed: 0,
+            tokensUsed: 0,
+          };
+        });
+        return reset;
+      });
+    }
+  };
+
+  // Handlers
+  const handleToggleEndpoint = (id: string) => {
+    setEndpoints((prev) =>
+      prev.map((ep) => (ep.id === id ? { ...ep, enabled: !ep.enabled } : ep))
+    );
+  };
+
+  const handleEditEndpoint = (endpoint: Endpoint) => {
+    setEditingEndpoint(endpoint);
+    setIsAddEndpointOpen(true);
+  };
+
+  const handleDeleteEndpoint = (id: string) => {
+    setEndpoints((prev) => prev.filter((ep) => ep.id !== id));
+  };
+
+  const handleSaveEndpoint = (savedEndpoint: Endpoint) => {
+    setEndpoints((prev) => {
+      const exists = prev.some((ep) => ep.id === savedEndpoint.id);
+      if (exists) {
+        return prev.map((ep) => (ep.id === savedEndpoint.id ? savedEndpoint : ep));
+      }
+      return [savedEndpoint, ...prev];
+    });
+  };
+
+  const handleAddProvider = (newProvider: Provider) => {
+    setProviders((prev) => [...prev, newProvider]);
+    setActiveProviderId(newProvider.id);
+  };
+
+  const handleRunHealthSweep = () => {
+    setIsHealthSweeping(true);
+    setTimeout(() => {
+      setEndpoints((prev) => EdgeRouterEngine.runHealthSweep(prev));
+      setIsHealthSweeping(false);
+    }, 300);
+  };
+
+  const handleRecordDecision = (decision: RoutingDecision, updatedEndpoints: Endpoint[]) => {
+    setRecentDecisions((prev) => [decision, ...prev.slice(0, 40)]);
+    setEndpoints(updatedEndpoints);
+  };
+
+  const handleSetApiKey = (providerId: string, apiKey: string) => {
+    localStorage.setItem(`er_api_key_${providerId}`, apiKey);
+    setEndpoints((prev) =>
+      prev.map((ep) => (ep.providerId === providerId ? { ...ep, apiKey } : ep))
+    );
+    if (providerId === 'prov-gemini') {
+      setUserGeminiKey(apiKey);
+      localStorage.setItem('er_gemini_key', apiKey);
+    }
+  };
+
+  const handleRunEdgeTest = (promptText?: string) => {
+    setActiveTab('tester');
+    const testPrompt = promptText || 'Autonomous edge router latency verification test';
+    setTimeout(() => {
+      try {
+        const { decision, updatedEndpoints } = EdgeRouterEngine.routeRequest(
+          activeProvider,
+          endpoints,
+          routingPolicy,
+          'india',
+          false,
+          testPrompt,
+          {
+            enableCrossProviderFallback: true,
+            allProviders: providers,
+            fallbackChain,
+            simulateQuotaExhaustion: false,
+          }
+        );
+        handleRecordDecision(decision, updatedEndpoints);
+        handleUpdateUsage(decision.providerId, 1, decision.tokensUsed || 45);
+      } catch (err) {
+        console.error('Test execution failed:', err);
+      }
+    }, 350);
+  };
+
+  const handleImportConfig = (data: { providers?: Provider[]; endpoints?: Endpoint[] }) => {
+    if (data.providers && Array.isArray(data.providers)) {
+      setProviders(data.providers);
+      if (data.providers[0]) setActiveProviderId(data.providers[0].id);
+    }
+    if (data.endpoints && Array.isArray(data.endpoints)) {
+      setEndpoints(data.endpoints);
+    }
+  };
+
+  const activeEndpointsCount = endpoints.filter(
+    (ep) => ep.providerId === activeProvider.id && ep.enabled
+  ).length;
+  const totalEndpointsCount = endpoints.filter((ep) => ep.providerId === activeProvider.id).length;
+
+  return (
+    <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col selection:bg-neutral-200 selection:text-neutral-950 bg-grid-texture relative w-full max-w-full overflow-x-hidden">
+      {/* Sticky Glass Navbar */}
+      <Navbar
+        providers={providers}
+        activeProviderId={activeProviderId}
+        onSelectProvider={setActiveProviderId}
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
+        onOpenAddEndpoint={() => {
+          setEditingEndpoint(null);
+          setIsAddEndpointOpen(true);
+        }}
+        onOpenAddProvider={() => setIsAddProviderOpen(true)}
+        onRunHealthSweep={handleRunHealthSweep}
+        isHealthSweeping={isHealthSweeping}
+        activeEndpointsCount={activeEndpointsCount}
+        totalEndpointsCount={totalEndpointsCount}
+        operatorUsername={operatorUsername}
+        onOpenLogin={() => setIsLoginOpen(true)}
+        isCopilotOpen={isCopilotOpen}
+        onToggleCopilot={() => setIsCopilotOpen(!isCopilotOpen)}
+        isWatchdogActive={isWatchdogActive}
+        onToggleWatchdog={() => setIsWatchdogActive(!isWatchdogActive)}
+      />
+
+      {/* Main Content with clean responsive containment */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-2.5 sm:px-6 lg:px-8 pt-4 sm:pt-8 pb-16 sm:pb-20 overflow-x-hidden min-w-0 max-w-full">
+        <div
+          key={activeTab + activeProviderId}
+          className="min-w-0 w-full max-w-full overflow-x-hidden"
+        >
+          {activeTab === 'dashboard' && (
+            <BentoDashboard
+              activeProvider={activeProvider}
+              endpoints={endpoints}
+              routingPolicy={routingPolicy}
+              onSelectPolicy={setRoutingPolicy}
+              onToggleEndpoint={handleToggleEndpoint}
+              onEditEndpoint={handleEditEndpoint}
+              onDeleteEndpoint={handleDeleteEndpoint}
+              onOpenAddEndpoint={() => {
+                setEditingEndpoint(null);
+                setIsAddEndpointOpen(true);
+              }}
+              recentDecisions={recentDecisions}
+              onOpenTester={() => setActiveTab('tester')}
+              onOpenQuota={() => setActiveTab('quota')}
+              providers={providers}
+              fallbackChain={fallbackChain}
+              isWatchdogActive={isWatchdogActive}
+              onToggleWatchdog={() => setIsWatchdogActive(!isWatchdogActive)}
+              watchdogLogs={watchdogLogs}
+              onTriggerWatchdogAudit={handleTriggerWatchdogAudit}
+            />
+          )}
+
+          {activeTab === 'tester' && (
+            <EdgeTester
+              activeProvider={activeProvider}
+              providers={providers}
+              fallbackChain={fallbackChain}
+              endpoints={endpoints}
+              routingPolicy={routingPolicy}
+              onRecordDecision={handleRecordDecision}
+              onUpdateUsage={handleUpdateUsage}
+            />
+          )}
+
+          {activeTab === 'quota' && (
+            <DailyQuotaTracker
+              providers={providers}
+              activeProvider={activeProvider}
+              onSelectProvider={setActiveProviderId}
+              dailyUsages={dailyUsages as any}
+              onUpdateUsage={handleUpdateUsage}
+              onResetUsage={handleResetUsage}
+              fallbackChain={fallbackChain}
+            />
+          )}
+
+          {activeTab === 'telemetry' && (
+            <TelemetryView
+              activeProvider={activeProvider}
+              endpoints={endpoints}
+              decisions={recentDecisions}
+              onOpenTester={() => setActiveTab('tester')}
+            />
+          )}
+
+          {activeTab === 'export' && (
+            <WorkerExporter
+              activeProvider={activeProvider}
+              providers={providers}
+              endpoints={endpoints}
+              routingPolicy={routingPolicy}
+              fallbackChain={fallbackChain}
+              onImportConfig={handleImportConfig}
+            />
+          )}
+        </div>
+      </main>
+
+      {/* Brutalist Footer */}
+      <footer className="border-t border-neutral-900 bg-neutral-950/80 py-5 sm:py-6 text-center text-xs font-mono text-neutral-500 w-full max-w-full overflow-hidden">
+        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4">
+          <div className="flex flex-wrap items-center justify-center sm:justify-start gap-1.5 sm:gap-2">
+            <span className="font-bold text-neutral-400 uppercase">[ER] EDGE ROUTER</span>
+            <span>— Serverless Multi-Region API Routing</span>
+          </div>
+          <div className="flex flex-wrap items-center justify-center sm:justify-end gap-2 sm:gap-4 text-[10px] sm:text-[11px] text-neutral-400">
+            <span>MULTI-REGION REDUNDANCY</span>
+            <span>•</span>
+            <span>SUB-MILLISECOND INGRESS</span>
+            <span>•</span>
+            <span>EDGE CACHE ACCELERATED</span>
+          </div>
+        </div>
+      </footer>
+
+      {/* Modals */}
+      <EndpointModal
+        isOpen={isAddEndpointOpen}
+        onClose={() => {
+          setIsAddEndpointOpen(false);
+          setEditingEndpoint(null);
+        }}
+        activeProvider={activeProvider}
+        endpointToEdit={editingEndpoint}
+        onSaveEndpoint={handleSaveEndpoint}
+      />
+
+      <ProviderModal
+        isOpen={isAddProviderOpen}
+        onClose={() => setIsAddProviderOpen(false)}
+        onAddProvider={handleAddProvider}
+      />
+
+      {/* Operator Login Modal */}
+      <OperatorLoginModal
+        isOpen={isLoginOpen}
+        onClose={() => setIsLoginOpen(false)}
+        onLoginSuccess={handleLoginSuccess}
+        currentUsername={operatorUsername}
+        currentGeminiKey={userGeminiKey}
+      />
+
+      {/* Autonomous AI Copilot & Voice Controller with Full Router Administrative Access */}
+      <AutonomousCopilot
+        isOpen={isCopilotOpen}
+        onClose={() => setIsCopilotOpen(false)}
+        providers={providers}
+        activeProvider={activeProvider}
+        endpoints={endpoints}
+        routingPolicy={routingPolicy}
+        fallbackChain={fallbackChain}
+        onSelectProvider={setActiveProviderId}
+        onSelectPolicy={setRoutingPolicy}
+        onRunHealthSweep={handleRunHealthSweep}
+        onSelectTab={setActiveTab}
+        onSetApiKey={handleSetApiKey}
+        onAddProvider={handleAddProvider}
+        onSaveEndpoint={handleSaveEndpoint}
+        onToggleEndpoint={handleToggleEndpoint}
+        onDeleteEndpoint={handleDeleteEndpoint}
+        onSetFallbackChain={setFallbackChain}
+        onResetUsage={handleResetUsage}
+        onRunEdgeTest={handleRunEdgeTest}
+        onGenerateNewProxyKey={() => {
+          const newKey = `sk-er-live-${Array.from(crypto.getRandomValues(new Uint8Array(16)))
+            .map((b) => b.toString(16).padStart(2, '0'))
+            .join('')}`;
+          localStorage.setItem('edge_router_proxy_key', newKey);
+        }}
+        operatorUsername={operatorUsername}
+        userGeminiKey={userGeminiKey}
+        onOpenLogin={() => setIsLoginOpen(true)}
+      />
+    </div>
+  );
+}

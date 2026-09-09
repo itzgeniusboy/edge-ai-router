@@ -1,0 +1,8 @@
+{
+  "name": "Edge Router",
+  "description": "Multi-region edge API router and load balancer with dynamic regional failover, sub-millisecond resolution, and high availability.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
