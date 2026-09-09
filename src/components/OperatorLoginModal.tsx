@@ -33,13 +33,16 @@ export const OperatorLoginModal: React.FC<OperatorLoginModalProps> = ({
     e.preventDefault();
     setError('');
     const u = username.trim();
-    // Paste me aaye quotes/spaces/newlines auto-saaf karo (common copy mistake)
-    const k = geminiKey.replace(/[\s'"`]+/g, '').trim();
+    // Paste me se key dhoondh ke nikaalo: quotes/spaces/Bearer-/extra words ho tab bhi chalega
+    const cleaned = geminiKey.replace(/[\s'"`]+/g, '').trim();
+    const found = cleaned.match(/AIza[0-9A-Za-z\-_]{20,}/);
+    const k = found ? found[0] : cleaned;
+    const peek = cleaned.length > 0 ? `'${cleaned.slice(0, 6)}...'` : '(khali)';
     if (u.length < 3) { setError('Username minimum 3 characters'); return; }
     if (password.length < 4) { setError('Password minimum 4 characters'); return; }
     if (password !== confirm) { setError('Password confirm match nahi ho raha'); return; }
-    if (!k) { setError('Gemini API key dalo (aistudio.google.com → Get API Key)'); return; }
-    if (!k.startsWith('AIza')) { setError('Ye Gemini key nahi lag rahi — key AIza... se start honi chahiye. aistudio.google.com se full key copy karo.'); return; }
+    if (!cleaned) { setError('Gemini API key dalo (aistudio.google.com → Get API Key)'); return; }
+    if (!found) { setError(`Ye Gemini key nahi lag rahi — tumne ${peek} dala (${cleaned.length} chars). aistudio.google.com se AIza... wali full key copy karo.`); return; }
     if (!isValidGeminiKey(k)) { setError(`Key adhuri lag rahi hai (${k.length} chars, ~39 hone chahiye) — dobara full copy-paste karo.`); return; }
     setBusy(true);
     try {
