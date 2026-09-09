@@ -1,6 +1,5 @@
-// In-app Tester inference (per-user key; 401 when missing — no fake success).
-import { getGenAIClient } from "../_lib";
-
+// In-app Tester inference — FULLY SELF-CONTAINED (no cross-file imports).
+// Key: per-user Gemini key; 401 when missing (no fake success).
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -17,7 +16,12 @@ export default async function handler(req: any, res: any) {
       return res.status(401).json({ error: "Login required: pehle signup me Gemini key dalo." });
     }
 
-    const ai = await getGenAIClient(clientKey);
+    const { GoogleGenAI } = await import("@google/genai");
+    const ai = new GoogleGenAI({
+      apiKey: clientKey,
+      httpOptions: { headers: { "User-Agent": "aistudio-build" } },
+    });
+
     let targetModel = "gemini-2.5-flash";
     if (model.includes("pro") || model.includes("r1") || model.includes("reasoner")) {
       targetModel = "gemini-3.1-pro-preview";
