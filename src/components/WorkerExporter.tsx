@@ -71,7 +71,7 @@ export const WorkerExporter: React.FC<WorkerExporterProps> = ({
   const fullEndpoint = `${universalBaseUrl}/chat/completions`;
 
   // Client snippets for SINGLE endpoint + per-user Gemini key
-  const displayKey = proxyApiKey || 'AIzaSy...tumhari-signup-wali-key';
+  const displayKey = proxyApiKey || 'tumhari-signup-wali-key';
   const codeSnippets: Record<'curl' | 'python' | 'node' | 'opencode' | 'nextjs', string> = {
     curl: `curl -X POST "${fullEndpoint}" \\
   -H "Content-Type: application/json" \\

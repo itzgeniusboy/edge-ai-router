@@ -299,7 +299,7 @@ app.post("/api/v1/chat/completions", async (req, res) => {
     if (!clientKey) {
       return res.status(401).json({
         error: {
-          message: "Login required: signup me apni Gemini key (AIzaSy...) dalo, fir usko Authorization: Bearer <TUMHARI_KEY> me bhejo. Endpoint single hai, key har user ki alag.",
+          message: "Login required: signup me apni Gemini key (AI Studio wali) dalo, fir usko Authorization: Bearer <TUMHARI_KEY> me bhejo. Endpoint single hai, key har user ki alag.",
           type: "authentication_error",
         },
       });
