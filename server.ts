@@ -5,13 +5,22 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-// NOTE (Vercel serverless): heavy SDKs (ws, @google/genai) are lazy-loaded
-// inside handlers/connections only, so module import can never crash the
-// serverless function (FUNCTION_INVOCATION_FAILED fix).
+// NOTE (Vercel serverless): module import must be 100% side-effect free —
+// it only creates the Express app + routes. HTTP server, WebSockets and
+// listen() are created inside startServer() (long-lived servers only).
+// Heavy SDKs (ws, @google/genai) are lazy-loaded inside handlers.
+
+// Reliable serverless detection (VERCEL is not guaranteed at function runtime)
+const IS_SERVERLESS = !!(
+  process.env.VERCEL ||
+  process.env.AWS_LAMBDA_FUNCTION_NAME ||
+  process.env.LAMBDA_TASK_ROOT ||
+  process.env.VERCEL_ENV
+);
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 const app = express();
-const server = http.createServer(app);
+let server: any = null;
 
 app.use(express.json({ limit: "10mb" }));
 
@@ -374,16 +383,13 @@ app.post("/api/v1/chat/completions", async (req, res) => {
   }
 });
 
-// WebSocket Live API — long-lived servers only, never on Vercel serverless
-if (!process.env.VERCEL) {
-  initLiveSockets().catch((e) => console.error("Live socket init failed:", e));
-}
-
-async function initLiveSockets() {
+// WebSocket Live API — wired only inside startServer() (long-lived servers).
+// Never runs on serverless: no top-level side effects here.
+async function initLiveSockets(httpServer: any) {
   const { WebSocketServer, WebSocket } = await import("ws") as any;
   const wss = new WebSocketServer({ noServer: true });
 
-  server.on("upgrade", (request: any, socket: any, head: any) => {
+  httpServer.on("upgrade", (request: any, socket: any, head: any) => {
     const url = new URL(request.url || "", `http://${request.headers.host}`);
     if (url.pathname === "/api/copilot/live") {
       wss.handleUpgrade(request, socket, head, (ws: any) => {
@@ -475,8 +481,14 @@ async function initLiveSockets() {
   });
 } // end initLiveSockets (long-lived servers only)
 
-// Vite middleware / static asset serving
+// Vite middleware / static asset serving (long-lived servers only)
 async function startServer() {
+  if (!server) {
+    server = http.createServer(app);
+    await initLiveSockets(server).catch((e) =>
+      console.error("Live socket init failed:", e)
+    );
+  }
   if (process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
@@ -497,8 +509,9 @@ async function startServer() {
   });
 }
 
-if (process.env.NODE_ENV !== "test" && !process.env.VERCEL) {
-  startServer();
+// Auto-start only on real long-lived servers — never serverless, never tests.
+if (process.env.NODE_ENV !== "test" && !IS_SERVERLESS) {
+  startServer().catch((e) => console.error("Server start failed:", e));
 }
 
 export { app, server, startServer };
