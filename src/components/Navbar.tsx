@@ -12,7 +12,8 @@ import {
   Flame,
   Globe,
   Bot,
-  User
+  User,
+  Key
 } from 'lucide-react';
 import { Provider } from '../types/router';
 
@@ -34,6 +35,8 @@ interface NavbarProps {
   onToggleCopilot: () => void;
   isWatchdogActive?: boolean;
   onToggleWatchdog?: () => void;
+  bell?: React.ReactNode;
+  onOpenKeys?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -54,6 +57,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onToggleCopilot,
   isWatchdogActive = true,
   onToggleWatchdog,
+  bell,
+  onOpenKeys,
 }) => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [providerDropdownOpen, setProviderDropdownOpen] = useState(false);
@@ -294,6 +299,18 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Action Buttons */}
           <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
+            {bell}
+            {onOpenKeys && (
+              <button
+                id="btn-provider-keys"
+                onClick={onOpenKeys}
+                title="Provider Keys — har provider me unlimited keys"
+                className="flex items-center justify-center gap-1.5 px-2 sm:px-2.5 py-1.5 h-8 sm:h-auto text-xs font-mono bg-neutral-900 border border-neutral-800 text-neutral-300 hover:text-white hover:border-neutral-600 transition-colors"
+              >
+                <Key className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="hidden md:inline font-bold">KEYS</span>
+              </button>
+            )}
             {/* Operator Auth Status */}
             <button
               id="btn-operator-auth"

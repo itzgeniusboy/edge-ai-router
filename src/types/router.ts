@@ -72,6 +72,8 @@ export interface RoutingDecision {
   responsePayload: string;
   tokensUsed: number;
   isLive?: boolean;
+  apiKeyIndex?: number;
+  keyPoolSize?: number;
 }
 
 export interface WatchdogEvent {

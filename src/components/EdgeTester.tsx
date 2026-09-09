@@ -16,10 +16,12 @@ import {
   Cpu
 } from 'lucide-react';
 import { Endpoint, Provider, RoutingPolicy, RoutingDecision } from '../types/router';
-import { EdgeRouterEngine } from '../services/edgeRouterEngine';
+import { EdgeRouterEngine, markProviderKeysExhausted } from '../services/edgeRouterEngine';
 import { SmartPromptRouter, PromptAnalysis } from '../services/autonomousWatchdog';
 import { SkeletonLoader } from './SkeletonLoader';
 import { getActiveGeminiKey } from '../utils/auth';
+import { getAllProviderKeys } from '../utils/providerKeys';
+import { notify } from '../utils/notify';
 
 interface EdgeTesterProps {
   activeProvider: Provider;
@@ -51,6 +53,7 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [lastResult, setLastResult] = useState<RoutingDecision | null>(null);
   const [copied, setCopied] = useState(false);
+  const [testerError, setTesterError] = useState('');
 
   // Sync selectedModel if activeProvider changes
   React.useEffect(() => {
@@ -77,9 +80,11 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
     if (providerEndpoints.length === 0 && !crossProviderFallbackEnabled) return;
 
     setIsLoading(true);
+    setTesterError('');
 
     try {
-      // 1. Resolve edge routing decision
+      const pools = getAllProviderKeys((providers || []).map((p) => p.id));
+      // 1. Resolve edge routing decision (skips keyless providers in fallback)
       const { decision, updatedEndpoints } = EdgeRouterEngine.routeRequest(
         activeProvider,
         endpoints,
@@ -92,21 +97,26 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
           allProviders: providers,
           fallbackChain,
           simulateQuotaExhaustion,
+          providerKeys: pools,
         }
       );
 
-      // 2. Real Live Inference via SINGLE gateway (/api/v1/chat/completions) + per-user key
+      // 2. Real Live Inference via gateway (/api/v1/chat/completions) + provider key pool
       if (enableRealInference) {
         try {
           const t0 = Date.now();
-          const userKey = getActiveGeminiKey();
+          const pool = pools[decision.providerId] || [];
+          const fallbackKey = getActiveGeminiKey();
+          const apiKeys = pool.length > 0 ? pool : (fallbackKey ? [fallbackKey] : []);
           const res = await fetch('/api/v1/chat/completions', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              ...(userKey ? { 'Authorization': `Bearer ${userKey}`, 'x-gemini-key': userKey } : {}),
+              ...(apiKeys[0] ? { 'Authorization': `Bearer ${apiKeys[0]}` } : {}),
             },
             body: JSON.stringify({
+              providerId: decision.providerId,
+              apiKeys,
               model: selectedModel,
               messages: [{ role: 'user', content: prompt }],
               max_tokens: 600,
@@ -122,8 +132,24 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
             decision.latencyMs = hdr ? Number(hdr) : Date.now() - t0;
             decision.tokensUsed = data.usage?.total_tokens || decision.tokensUsed;
             decision.isLive = true;
+            const ki = data.edge_routing?.key_index;
+            if (typeof ki === 'number') decision.apiKeyIndex = ki;
+            if (decision.crossProviderFailover || (data.edge_routing?.keys_tried || 1) > 1) {
+              notify('warn', `Key rotate: ${decision.providerName}`, `Key #${(ki ?? 0) + 1} se jawab aaya.`);
+            }
           } else if (res.status === 401) {
-            decision.responsePayload = 'Login required: signup me apni Gemini key dalo.';
+            decision.responsePayload = `${decision.providerName} ki key dalo (KEYS button → Provider Keys).`;
+            decision.isLive = false;
+            notify('warn', 'Key missing', `${decision.providerName} ke liye koi key nahi mili.`);
+          } else if (res.status === 429 || res.status === 502) {
+            const data = await res.json().catch(() => null);
+            markProviderKeysExhausted(decision.providerId, Math.max(1, pool.length));
+            decision.responsePayload = data?.error?.message || `Upstream busy (${res.status}). 60s cooldown lagaya.`;
+            decision.isLive = false;
+            notify('error', `Quota/busy: ${decision.providerName}`, 'Keys 60s cooldown pe. Fallback ya nayi key lagao.');
+          } else {
+            const data = await res.json().catch(() => null);
+            decision.responsePayload = data?.error?.message || `Request fail (${res.status}).`;
             decision.isLive = false;
           }
         } catch (netErr) {
@@ -138,6 +164,9 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
       }
     } catch (err: any) {
       console.error(err);
+      const msg = err?.message || 'Test fail ho gaya. Provider Keys me key dalo.';
+      setTesterError(msg);
+      notify('error', 'Edge test fail', msg);
     } finally {
       setIsLoading(false);
     }
@@ -166,6 +195,12 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
           Dispatch requests through the simulated edge worker. Test latency distribution, failover triggers, and cache resolution with zero server overhead.
         </p>
       </div>
+
+      {testerError && (
+        <div className="p-3 bg-rose-950/70 border border-rose-800/80 text-rose-300 text-xs font-sans">
+          {testerError}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8">
         {/* Left Column: Request Dispatch Form (Span 6) */}

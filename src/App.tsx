@@ -14,6 +14,11 @@ import { EndpointModal } from './components/EndpointModal';
 import { ProviderModal } from './components/ProviderModal';
 import { OperatorLoginModal } from './components/OperatorLoginModal';
 import { ProfileModal } from './components/ProfileModal';
+import { ProviderKeysModal } from './components/ProviderKeysModal';
+import { NotificationsBell } from './components/NotificationsBell';
+import { Toasts } from './components/Toasts';
+import { notify, subscribeNotifications, loadNotifications, saveNotifications, type AppNotification } from './utils/notify';
+import { getAllProviderKeys, getProviderKeys, addProviderKey } from './utils/providerKeys';
 import { AutonomousCopilot } from './components/AutonomousCopilot';
 import { INITIAL_PROVIDERS, INITIAL_ENDPOINTS, INITIAL_FALLBACK_CHAIN, INITIAL_DAILY_USAGES } from './data/initialData';
 import { Provider, Endpoint, RoutingPolicy, RoutingDecision, WatchdogEvent } from './types/router';
@@ -163,15 +168,26 @@ export default function App() {
   const [editingEndpoint, setEditingEndpoint] = useState<Endpoint | null>(null);
   const [isAddProviderOpen, setIsAddProviderOpen] = useState(false);
 
-  // Operator Authentication & Autonomous Copilot state (single-gateway, per-user key, strict gate)
+  // Operator Authentication & Autonomous Copilot state (multi-provider, per-user keys, strict gate)
   const [loggedUser, setLoggedUser] = useState<string | null>(() => {
     try {
-      // One-time migration: old multi-provider demo data -> single Gemini gateway
-      if (localStorage.getItem('er_data_version') !== 'v2-single') {
+      // One-time migration: v1/v2 data -> multi-provider catalog (users + keys preserved)
+      if (localStorage.getItem('er_data_version') !== 'v3-multi') {
         localStorage.removeItem('er_providers');
         localStorage.removeItem('er_endpoints');
+        localStorage.removeItem('er_active_provider');
         localStorage.setItem('er_fallback_chain', JSON.stringify(INITIAL_FALLBACK_CHAIN));
-        localStorage.setItem('er_data_version', 'v2-single');
+        localStorage.setItem('er_data_version', 'v3-multi');
+        // Seed Gemini key pool from the logged-in user's saved key so login keeps working
+        try {
+          const sess = localStorage.getItem('er_session_user');
+          const users = JSON.parse(localStorage.getItem('er_users') || '[]');
+          const me = users.find((x: any) => x.username === sess);
+          const gk = me?.geminiKey || localStorage.getItem('er_gemini_key') || '';
+          if (gk.trim() && !localStorage.getItem('er_api_keys_prov-gemini')) {
+            localStorage.setItem('er_api_keys_prov-gemini', JSON.stringify([gk.trim()]));
+          }
+        } catch { /* ignore */ }
       }
       return getSessionUsername();
     } catch {
@@ -203,6 +219,45 @@ export default function App() {
   });
   const [isCopilotOpen, setIsCopilotOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isKeysOpen, setIsKeysOpen] = useState(false);
+
+  // Notifications: manual actions + agent actions land here (persisted, capped at 50)
+  const [notifications, setNotifications] = useState<AppNotification[]>(() => loadNotifications());
+  const [toasts, setToasts] = useState<AppNotification[]>([]);
+
+  useEffect(() => {
+    const unsub = subscribeNotifications((n) => {
+      setNotifications((prev) => {
+        const next = [{ ...n }, ...prev].slice(0, 50);
+        saveNotifications(next);
+        return next;
+      });
+      setToasts((prev) => [...prev.slice(-2), n]);
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== n.id));
+      }, 4000);
+    });
+    return unsub;
+  }, []);
+
+  const markAllNotifRead = () => {
+    setNotifications((prev) => {
+      const next = prev.map((n) => ({ ...n, read: true }));
+      saveNotifications(next);
+      return next;
+    });
+  };
+  const clearNotifications = () => {
+    setNotifications([]);
+    saveNotifications([]);
+  };
+  const dismissNotification = (id: string) => {
+    setNotifications((prev) => {
+      const next = prev.filter((n) => n.id !== id);
+      saveNotifications(next);
+      return next;
+    });
+  };
 
   // Autonomous Self-Driving Watchdog State
   const [isWatchdogActive, setIsWatchdogActive] = useState<boolean>(() => {
@@ -236,8 +291,10 @@ export default function App() {
     try {
       setSession(username);
       localStorage.setItem('er_gemini_key', key);
+      addProviderKey('prov-gemini', key);
     } catch { /* ignore */ }
     setIsLoginOpen(false);
+    notify('success', `Welcome, ${username}`, 'Login ho gaya. KEYS button se har provider ki keys add karo.');
   };
 
   const handleLogout = () => {
@@ -250,12 +307,15 @@ export default function App() {
     setIsLoginOpen(true);
     setIsCopilotOpen(false);
     setIsProfileOpen(false);
+    notify('info', 'Logged out', 'Session band. Dobara login karo.');
   };
 
   const handleProfileUpdated = (username: string, key: string) => {
     setLoggedUser(username);
     setOperatorUsername(username);
     setUserGeminiKey(key);
+    try { addProviderKey('prov-gemini', key); } catch { /* ignore */ }
+    notify('success', 'Profile updated', `${username} ka account save ho gaya.`);
   };
 
   // Profile icon: logged-in ho to Profile kholo, nahi to Login
@@ -330,6 +390,9 @@ export default function App() {
         }
         if (healResult.event) {
           setWatchdogLogs((prev) => [healResult.event!, ...prev.slice(0, 49)]);
+          if (healResult.event.type !== 'ping_sweep') {
+            notify('agent', `Watchdog: ${healResult.event.title}`, healResult.event.actionTaken || healResult.event.description);
+          }
         }
       }
     }, 25000);
@@ -349,6 +412,7 @@ export default function App() {
 
     if (healResult.event) {
       setWatchdogLogs((prev) => [healResult.event!, ...prev.slice(0, 49)]);
+      notify('info', `Manual sweep: ${healResult.event.title}`, healResult.event.actionTaken || healResult.event.description);
     } else {
       const sweepEvent: WatchdogEvent = {
         id: 'wd_manual_' + Date.now(),
@@ -388,6 +452,8 @@ export default function App() {
   };
 
   const handleResetUsage = (providerId?: string) => {
+    const pname = providerId ? providers.find((p) => p.id === providerId)?.name || providerId : 'saare providers';
+    notify('info', `Quota reset: ${pname}`, 'Counters zero kar diye.');
     if (providerId) {
       setDailyUsages((prev) => {
         const current = prev[providerId];
@@ -416,11 +482,13 @@ export default function App() {
     }
   };
 
-  // Handlers
+  // Handlers (each manual action fires a notification)
   const handleToggleEndpoint = (id: string) => {
+    const ep = endpoints.find((e) => e.id === id);
     setEndpoints((prev) =>
-      prev.map((ep) => (ep.id === id ? { ...ep, enabled: !ep.enabled } : ep))
+      prev.map((e) => (e.id === id ? { ...e, enabled: !e.enabled } : e))
     );
+    if (ep) notify('info', `Node ${ep.enabled ? 'OFF' : 'ON'}: ${ep.name}`, ep.enabled ? 'Is node pe traffic band.' : 'Node wapas live.');
   };
 
   const handleEditEndpoint = (endpoint: Endpoint) => {
@@ -429,35 +497,44 @@ export default function App() {
   };
 
   const handleDeleteEndpoint = (id: string) => {
-    setEndpoints((prev) => prev.filter((ep) => ep.id !== id));
+    const ep = endpoints.find((e) => e.id === id);
+    setEndpoints((prev) => prev.filter((e) => e.id !== id));
+    if (ep) notify('warn', `Node deleted: ${ep.name}`, 'Config se hata diya gaya.');
   };
 
   const handleSaveEndpoint = (savedEndpoint: Endpoint) => {
+    const isEdit = endpoints.some((ep) => ep.id === savedEndpoint.id);
     setEndpoints((prev) => {
-      const exists = prev.some((ep) => ep.id === savedEndpoint.id);
-      if (exists) {
+      if (isEdit) {
         return prev.map((ep) => (ep.id === savedEndpoint.id ? savedEndpoint : ep));
       }
       return [savedEndpoint, ...prev];
     });
+    notify('success', isEdit ? `Node updated: ${savedEndpoint.name}` : `Node added: ${savedEndpoint.name}`, savedEndpoint.baseUrl);
   };
 
   const handleAddProvider = (newProvider: Provider) => {
     setProviders((prev) => [...prev, newProvider]);
     setActiveProviderId(newProvider.id);
+    notify('success', `Provider added: ${newProvider.name}`, 'Ab Provider Keys me iski key dalo.');
   };
 
   const handleRunHealthSweep = () => {
     setIsHealthSweeping(true);
+    notify('info', 'Ping sweep shuru', 'Saare nodes ki latency check ho rahi hai.');
     setTimeout(() => {
       setEndpoints((prev) => EdgeRouterEngine.runHealthSweep(prev));
       setIsHealthSweeping(false);
+      notify('success', 'Ping sweep complete', 'Latency fresh ho gayi. Telemetry me dekho.');
     }, 300);
   };
 
   const handleRecordDecision = (decision: RoutingDecision, updatedEndpoints: Endpoint[]) => {
     setRecentDecisions((prev) => [decision, ...prev.slice(0, 40)]);
     setEndpoints(updatedEndpoints);
+    if (decision.crossProviderFailover) {
+      notify('warn', `Failover: ${decision.initialProviderName} → ${decision.providerName}`, decision.failoverReason || 'Quota/limit pe auto-shift.');
+    }
   };
 
   const handleSetApiKey = (providerId: string, apiKey: string) => {
@@ -477,6 +554,7 @@ export default function App() {
   const handleRunEdgeTest = (promptText?: string) => {
     setActiveTab('tester');
     const testPrompt = promptText || 'Autonomous edge router latency verification test';
+    notify('info', 'Edge test dispatch', 'Test request route ho rahi hai.');
     setTimeout(() => {
       try {
         const { decision, updatedEndpoints } = EdgeRouterEngine.routeRequest(
@@ -491,12 +569,15 @@ export default function App() {
             allProviders: providers,
             fallbackChain,
             simulateQuotaExhaustion: false,
+            providerKeys: getAllProviderKeys(providers.map((p) => p.id)),
           }
         );
         handleRecordDecision(decision, updatedEndpoints);
         handleUpdateUsage(decision.providerId, 1, decision.tokensUsed || 45);
-      } catch (err) {
+        notify('success', `Edge test: ${decision.providerName}`, `${decision.latencyMs}ms • ${decision.tokensUsed || 0} tokens.`);
+      } catch (err: any) {
         console.error('Test execution failed:', err);
+        notify('error', 'Edge test fail', err?.message || 'Koi usable key wala provider nahi mila.');
       }
     }, 350);
   };
@@ -509,6 +590,7 @@ export default function App() {
     if (data.endpoints && Array.isArray(data.endpoints)) {
       setEndpoints(data.endpoints);
     }
+    notify('success', 'Config imported', 'Providers + endpoints load ho gaye.');
   };
 
   const activeEndpointsCount = endpoints.filter(
@@ -550,6 +632,15 @@ export default function App() {
         totalEndpointsCount={totalEndpointsCount}
         operatorUsername={operatorUsername}
         onOpenLogin={handleOperatorClick}
+        onOpenKeys={() => setIsKeysOpen(true)}
+        bell={
+          <NotificationsBell
+            items={notifications}
+            onMarkAllRead={markAllNotifRead}
+            onClear={clearNotifications}
+            onDismiss={dismissNotification}
+          />
+        }
         isCopilotOpen={isCopilotOpen}
         onToggleCopilot={() => setIsCopilotOpen(!isCopilotOpen)}
         isWatchdogActive={isWatchdogActive}
@@ -690,6 +781,23 @@ export default function App() {
         onUpdated={handleProfileUpdated}
         onLogout={handleLogout}
       />
+
+      {/* Provider Keys Manager (unlimited keys per provider) */}
+      <ProviderKeysModal
+        isOpen={isKeysOpen}
+        onClose={() => setIsKeysOpen(false)}
+        providers={providers}
+        onChanged={() => {
+          // Keep Export tab key fresh with Gemini pool head
+          try {
+            const head = getProviderKeys('prov-gemini')[0];
+            if (head) setUserGeminiKey(head);
+          } catch { /* ignore */ }
+        }}
+      />
+
+      {/* Toasts for latest notifications */}
+      <Toasts items={toasts} />
 
       {/* Autonomous AI Copilot & Voice Controller with Full Router Administrative Access */}
       <AutonomousCopilot

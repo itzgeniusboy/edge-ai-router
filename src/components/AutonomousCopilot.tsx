@@ -20,9 +20,14 @@ import {
   ArrowRight,
   Shield,
   Key,
-  RefreshCw
+  RefreshCw,
+  Code2
 } from 'lucide-react';
 import { Provider, Endpoint, RoutingPolicy } from '../types/router';
+import { CopyButton } from './CopyButton';
+import { stripActionTags, splitCodeSegments, findUrls } from '../utils/copy';
+import { getProviderKeys } from '../utils/providerKeys';
+import { notify } from '../utils/notify';
 
 interface Message {
   id: string;
@@ -32,6 +37,55 @@ interface Message {
   modelUsed?: string;
   executedActions?: string[];
 }
+
+// URL auto-link with per-URL copy
+const RichText: React.FC<{ text: string }> = ({ text }) => {
+  if (findUrls(text).length === 0) return <>{text}</>;
+  const parts: React.ReactNode[] = [];
+  const re = /https?:\/\/[^\s)>\]`'"]+/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let k = 0;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push(<span key={k++}>{text.slice(last, m.index)}</span>);
+    const url = m[0];
+    parts.push(
+      <span key={k++} className="inline-flex items-center gap-1 break-all align-baseline">
+        <a href={url} target="_blank" rel="noreferrer" className="text-emerald-300 underline">
+          {url}
+        </a>
+        <CopyButton text={url} label="" title="Copy URL" />
+      </span>
+    );
+    last = m.index + url.length;
+  }
+  if (last < text.length) parts.push(<span key={k++}>{text.slice(last)}</span>);
+  return <>{parts}</>;
+};
+
+// Message body: ``` code blocks get their own copy button, rest is linkified text
+const MessageBody: React.FC<{ content: string }> = ({ content }) => {
+  const segs = splitCodeSegments(stripActionTags(content));
+  return (
+    <div className="whitespace-pre-wrap font-sans break-words space-y-2">
+      {segs.map((s, i) =>
+        s.type === 'code' ? (
+          <div key={i} className="border border-neutral-700 bg-neutral-950">
+            <div className="flex items-center justify-between px-2 py-1 border-b border-neutral-800 bg-neutral-900">
+              <span className="text-[10px] font-mono text-emerald-400 uppercase">{s.lang}</span>
+              <CopyButton text={s.body} label="COPY CODE" title="Copy code block" />
+            </div>
+            <pre className="p-2 text-[11px] font-mono overflow-x-auto whitespace-pre">{s.body}</pre>
+          </div>
+        ) : (
+          <div key={i}>
+            <RichText text={s.body} />
+          </div>
+        )
+      )}
+    </div>
+  );
+};
 
 interface AutonomousCopilotProps {
   isOpen: boolean;
@@ -92,17 +146,14 @@ export const AutonomousCopilot: React.FC<AutonomousCopilotProps> = ({
       {
         id: 'msg_welcome',
         role: 'assistant',
-        content: `Namaste! Main aapka Autonomous Edge AI Operator hoon — mere paas is pure router ka 100% Full Administrative Access hai.
-Aapko kisi bhi complex settings ko manual chhedne ki zaroorat nahi hai. Aap bas mujhe bolte jayein aur main router mein sab automatically set karta jaunga!
+        content: `Namaste! Main aapka Autonomous Edge AI Operator hoon.
 
-⚡ Main aapke liye kya-kya kar sakta hoon:
-• API Keys Add / Update: Aap kisi bhi provider (OpenAI, Groq, Cerebras, Gemini, DeepSeek, etc.) ki API key bhejein, main turant save aur configure kar dunga.
-• Naye Providers & Edge Nodes: Naya API endpoint ya custom model add karwa sakte hain.
-• Cross-Provider Failover Chain: Ek provider down ho to doosre par automatic shift karne ki chain set kar sakta hoon.
-• Routing Algorithm & Nodes: Lowest-latency, geo-routing policy change karna, nodes ko toggle ya delete karna.
-• Quota Reset & Live Edge Testing: Quotas reset karna aur live inference dispatch test chalaana.
+⚡ Kya-kya karta hoon:
+• Provider keys save (Gemini, Groq, OpenRouter, Cerebras — unlimited keys)
+• Endpoint URL / curl / python snippets dena (copy button ke saath)
+• Failover chain, routing policy, edge test, quota reset
 
-Aap Hindi, Hinglish ya English mein bol ya likh sakte hain!`,
+Short me jawab dunga — detail chahiye to bol dena. Hindi/Hinglish/English sab chalega!`,
         timestamp: Date.now(),
         modelUsed: 'gemini-3.5-flash',
       },
@@ -471,6 +522,13 @@ Aap Hindi, Hinglish ya English mein bol ya likh sakte hain!`,
             totalEndpoints: endpoints.length,
             activeEndpoints,
             avgLatency,
+            siteBaseUrl: typeof window !== 'undefined' ? `${window.location.origin}/api/v1` : '',
+            providerCatalog: providers.map((p) => ({
+              id: p.id,
+              baseUrl: p.defaultBaseUrl,
+              models: p.models,
+              hasKey: getProviderKeys(p.id).length > 0,
+            })),
             providers: providers.map((p) => ({
               id: p.id,
               name: p.name,
@@ -508,6 +566,9 @@ Aap Hindi, Hinglish ya English mein bol ya likh sakte hain!`,
 
       const replyText = data.text || 'Action acknowledged.';
       const executed = executeAiActions(replyText);
+      if (executed.length > 0) {
+        notify('agent', `Copilot ne ${executed.length} action kiya`, executed.slice(0, 3).join(' • '));
+      }
 
       const botMessage: Message = {
         id: `msg_bot_${Date.now()}`,
@@ -919,6 +980,8 @@ Aap Hindi, Hinglish ya English mein bol ya likh sakte hain!`,
                     <span className="text-emerald-500">{m.modelUsed}</span>
                   </>
                 )}
+                <span>•</span>
+                <CopyButton text={stripActionTags(m.content)} label="COPY" title="Copy full message" />
               </div>
 
               <div
@@ -928,7 +991,7 @@ Aap Hindi, Hinglish ya English mein bol ya likh sakte hain!`,
                     : 'bg-neutral-900 text-neutral-200 border border-neutral-800'
                 }`}
               >
-                <div className="whitespace-pre-wrap font-sans break-words">{m.content}</div>
+                <MessageBody content={m.content} />
 
                 {/* Speak this message button for assistant */}
                 {!isUser && (
@@ -998,14 +1061,21 @@ Aap Hindi, Hinglish ya English mein bol ya likh sakte hain!`,
             <span>Puri site chala do (Auto-Optimize)</span>
           </button>
           <button
-            onClick={() => handleSendMessage('Mera Groq API key gsk_live_demo_987654 add kar do')}
+            onClick={() => handleSendMessage('Mera endpoint URL aur curl command do')}
             className="flex-shrink-0 px-2 py-1 bg-neutral-900 hover:bg-neutral-800 border border-neutral-750 text-neutral-300 hover:text-white text-[10px] flex items-center gap-1 transition-colors"
           >
-            <Key className="w-3 h-3 text-emerald-400" />
-            <span>Add Groq API Key</span>
+            <Terminal className="w-3 h-3 text-emerald-400" />
+            <span>Endpoint + curl command</span>
           </button>
           <button
-            onClick={() => handleSendMessage('Multi-provider failover chain Cerebras -> Groq -> Gemini -> OpenAI set kar do')}
+            onClick={() => handleSendMessage('Python me OpenAI client se connect karne ka snippet do')}
+            className="flex-shrink-0 px-2 py-1 bg-neutral-900 hover:bg-neutral-800 border border-neutral-750 text-neutral-300 hover:text-white text-[10px] flex items-center gap-1 transition-colors"
+          >
+            <Code2 className="w-3 h-3 text-emerald-400" />
+            <span>Python snippet</span>
+          </button>
+          <button
+            onClick={() => handleSendMessage('Failover chain Gemini -> Groq -> OpenRouter -> Cerebras set kar do')}
             className="flex-shrink-0 px-2 py-1 bg-neutral-900 hover:bg-neutral-800 border border-neutral-750 text-neutral-300 hover:text-white text-[10px] flex items-center gap-1 transition-colors"
           >
             <Shield className="w-3 h-3 text-emerald-400" />

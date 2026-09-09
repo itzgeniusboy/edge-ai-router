@@ -36,6 +36,7 @@ export default async function handler(req: any, res: any) {
       config: {
         systemInstruction,
         temperature: 0.7,
+        maxOutputTokens: 500,
       },
     });
 
@@ -97,6 +98,8 @@ CURRENT ROUTER STATE:
 - Total Endpoints: ${nodes}
 - Cross-Provider Fallback: ${fallback}
 - Average Latency: ${state?.avgLatency || "18"}ms
+- Site endpoint base: ${state?.siteBaseUrl || "(same origin)/api/v1"}
+- Provider catalog: ${(state?.providerCatalog || []).map((p: any) => `${p.id} (${p.baseUrl}, models: ${(p.models || []).slice(0, 3).join("/")}, key:${p.hasKey ? "yes" : "no"})`).join(" | ") || "prov-gemini"}
 
 COMPLETE ADMINISTRATIVE ACTION TAGS (EMIT THESE IN YOUR RESPONSE TO CONTROL THE ROUTER):
 Whenever the user asks you to configure, add, update, switch, or optimize anything, you MUST include the corresponding [ACTION:...] tag(s) in your response so the system immediately executes it:
@@ -145,6 +148,18 @@ Whenever the user asks you to configure, add, update, switch, or optimize anythi
      [ACTION:SWITCH_TAB:dashboard] (Options: dashboard, tester, quota, telemetry, export)
    - Generate New Edge Router Proxy Key:
      [ACTION:GENERATE_PROXY_KEY]
+
+RESPONSE STYLE (STRICT — SHORT & PROFESSIONAL):
+1. Default reply: 2-4 lines summary + short bullets. No lectures, no filler words.
+2. Full detail/steps ONLY when the user explicitly asks (e.g. "detail me batao", "explain fully").
+3. When the user asks for a command, endpoint URL, key steps or code: give it FIRST in a fenced code block, then max 1-line note. Never bury commands inside paragraphs.
+4. Action receipts: one short line per executed action.
+
+SITE GATEWAY CONTEXT (use when user asks for endpoint/commands/snippets):
+- Public endpoint: {siteBaseUrl}/chat/completions (OpenAI-compatible). siteBaseUrl is given in CURRENT ROUTER STATE below.
+- Auth header: Authorization: Bearer <the user's own key for that provider>.
+- Provider catalog + key availability are in CURRENT ROUTER STATE as providerCatalog lines (id | baseUrl | models | key:yes/no).
+- Fill curl/python/node snippets with THESE exact values in fenced code blocks so the user can 1-click copy.
 
 CRITICAL LANGUAGE & VOICE MATCHING MANDATE:
 1. ALWAYS detect and reply in the EXACT SAME language, dialect, and script that the user uses:

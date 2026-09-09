@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Shield, Key, User, Lock, Bot, X, Eye, EyeOff } from 'lucide-react';
 import { getUsers, saveUsers, sha256Hex, isValidGeminiKey, extractGeminiKey, setSession } from '../utils/auth';
+import { addProviderKey } from '../utils/providerKeys';
 
 interface OperatorLoginModalProps {
   isOpen: boolean;
@@ -54,6 +55,7 @@ export const OperatorLoginModal: React.FC<OperatorLoginModalProps> = ({
       saveUsers(users);
       setSession(u);
       localStorage.setItem('er_gemini_key', k);
+      try { addProviderKey('prov-gemini', k); } catch { /* ignore */ }
       onLoginSuccess(u, k);
       onClose();
     } finally {
@@ -76,6 +78,7 @@ export const OperatorLoginModal: React.FC<OperatorLoginModalProps> = ({
       setSession(found.username);
       localStorage.setItem('er_operator_username', found.username);
       localStorage.setItem('er_gemini_key', found.geminiKey);
+      try { addProviderKey('prov-gemini', found.geminiKey); } catch { /* ignore */ }
       onLoginSuccess(found.username, found.geminiKey);
       onClose();
     } finally {
