@@ -17,6 +17,30 @@ export const REGIONAL_PROXIMITY: Record<RegionCode, Record<string, number>> = {
 // In-memory simulated edge cache for zero-overhead performance
 const edgeCache = new Map<string, { response: string; timestamp: number }>();
 
+// Per-key cooldown after 429 (memory-only, 60s). Key: `${providerId}:${keyIndex}`
+const keyCooldowns = new Map<string, number>();
+const KEY_COOLDOWN_MS = 60000;
+
+export function markProviderKeysExhausted(providerId: string, poolSize: number) {
+  const now = Date.now();
+  for (let i = 0; i < poolSize; i++) {
+    keyCooldowns.set(`${providerId}:${i}`, now + KEY_COOLDOWN_MS);
+  }
+}
+
+export function getUsableKeyIndexes(providerId: string, poolSize: number): number[] {
+  const now = Date.now();
+  const all = Array.from({ length: poolSize }, (_, i) => i);
+  // Strict: cooled keys are skipped (fallback avoids just-429 providers).
+  // Callers fall back to index 0 only when nothing is usable.
+  return all.filter((i) => (keyCooldowns.get(`${providerId}:${i}`) || 0) <= now);
+}
+
+export function countUsableKeys(providerId: string, pool: string[] | undefined): number {
+  if (!pool || pool.length === 0) return 0;
+  return getUsableKeyIndexes(providerId, pool.length).length;
+}
+
 export class EdgeRouterEngine {
   /**
    * Selects an endpoint based on policy, handles failover redundancy
@@ -33,6 +57,7 @@ export class EdgeRouterEngine {
       allProviders?: Provider[];
       fallbackChain?: string[];
       simulateQuotaExhaustion?: boolean;
+      providerKeys?: Record<string, string[]>;
     }
   ): {
     decision: RoutingDecision;
@@ -62,13 +87,20 @@ export class EdgeRouterEngine {
       (ep) => ep.providerId === activeProvider.id && ep.enabled
     );
 
+    const usableKeysOf = (pid: string): number => {
+      const pool = options?.providerKeys?.[pid];
+      if (!options?.providerKeys) return 1; // keys unknown (legacy call) — don't block
+      return countUsableKeys(pid, pool);
+    };
+
     if (providerEndpoints.length === 0) {
       // If no endpoints for active provider, try cross-provider fallback as emergency
+      // (skip providers with zero usable keys so we never route blind)
       if (options?.enableCrossProviderFallback && options?.allProviders && options?.fallbackChain) {
         for (const chainId of options.fallbackChain) {
           const fallbackCand = options.allProviders.find((p) => p.id === chainId);
           const fallbackEps = endpoints.filter((ep) => ep.providerId === chainId && ep.enabled);
-          if (fallbackCand && fallbackEps.length > 0) {
+          if (fallbackCand && fallbackEps.length > 0 && usableKeysOf(chainId) > 0) {
             initialProviderName = activeProvider.name;
             activeProvider = fallbackCand;
             providerEndpoints = fallbackEps;
@@ -205,6 +237,12 @@ export class EdgeRouterEngine {
       promptSummary: prompt.length > 50 ? prompt.slice(0, 50) + '...' : prompt,
       responsePayload: responseText,
       tokensUsed: Math.floor(Math.random() * 150) + 30,
+      apiKeyIndex: (() => {
+        const pool = options?.providerKeys?.[activeProvider.id] || [];
+        if (pool.length === 0) return undefined;
+        return getUsableKeyIndexes(activeProvider.id, pool.length)[0] ?? 0;
+      })(),
+      keyPoolSize: (options?.providerKeys?.[activeProvider.id] || []).length || undefined,
     };
 
     // Update endpoint telemetry stats in immutably cloned array

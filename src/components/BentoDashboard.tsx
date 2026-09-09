@@ -177,21 +177,19 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
             </span>
           </div>
           <div className="flex items-center gap-1.5 overflow-x-auto py-1 max-w-full text-neutral-200">
-            <span className="bg-white text-neutral-950 font-bold px-1.5 py-0.5 text-[10px] flex-shrink-0">
-              1. {activeProvider.name} (ACTIVE)
-            </span>
-            <ArrowRight className="w-3 h-3 text-neutral-600 flex-shrink-0" />
-            <span className="bg-neutral-950 border border-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-300 flex-shrink-0">
-              2. Groq (14.4k RPD)
-            </span>
-            <ArrowRight className="w-3 h-3 text-neutral-600 flex-shrink-0" />
-            <span className="bg-neutral-950 border border-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-300 flex-shrink-0">
-              3. Cerebras (1M TPD)
-            </span>
-            <ArrowRight className="w-3 h-3 text-neutral-600 flex-shrink-0" />
-            <span className="bg-neutral-950 border border-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400 flex-shrink-0">
-              4. Gemini (1.5k RPD)
-            </span>
+            {(fallbackChain && fallbackChain.length > 0 ? fallbackChain : [activeProvider.id]).map((pid, idx) => {
+              const p = (providers || []).find((x) => x.id === pid);
+              const label = p ? p.name : pid;
+              const isActive = pid === activeProvider.id && idx === 0;
+              return (
+                <span key={`${pid}-${idx}`} className="flex items-center gap-1.5 flex-shrink-0">
+                  {idx > 0 && <ArrowRight className="w-3 h-3 text-neutral-600 flex-shrink-0" />}
+                  <span className={`${isActive ? 'bg-white text-neutral-950 font-bold' : 'bg-neutral-950 border border-neutral-800 text-neutral-300'} px-1.5 py-0.5 text-[10px] flex-shrink-0`}>
+                    {idx + 1}. {label}{isActive ? ' (ACTIVE)' : ''}
+                  </span>
+                </span>
+              );
+            })}
           </div>
         </div>
 

@@ -34,6 +34,94 @@ function resolvePublicUserKey(req: any): string {
   return headerKey.trim() || bearer;
 }
 
+// Multi-provider catalog (OpenAI-compatible base URLs). No secrets here — keys always per-user.
+const PROVIDER_CATALOG: Record<string, { name: string; baseUrl: string; defaultModel: string }> = {
+  "prov-gemini": { name: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", defaultModel: "gemini-flash-latest" },
+  "prov-groq": { name: "Groq", baseUrl: "https://api.groq.com/openai/v1", defaultModel: "llama-3.3-70b-versatile" },
+  "prov-openrouter": { name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", defaultModel: "openai/gpt-4o-mini" },
+  "prov-cerebras": { name: "Cerebras", baseUrl: "https://api.cerebras.ai/v1", defaultModel: "llama-3.3-70b" },
+};
+
+const LEGACY_GEMINI_ALIAS: Record<string, string> = {
+  "gemini-2.5-flash": "gemini-flash-latest",
+  "gemini-2.0-flash": "gemini-flash-latest",
+  "gemini-1.5-flash": "gemini-flash-latest",
+  "gemini-1.5-pro": "gemini-pro-latest",
+  "gemini-2.0-flash-lite": "gemini-flash-lite-latest",
+};
+
+function isAllowedUpstream(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "https:") return false;
+    const host = u.hostname.toLowerCase();
+    if (/(^|\.)(generativelanguage\.googleapis\.com|api\.groq\.com|openrouter\.ai|api\.cerebras\.ai)$/.test(host)) return true;
+    if (!host.includes(".")) return false;
+    if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) return false;
+    if (/^(10\.|127\.|192\.168\.|169\.254\.|0\.0\.0\.0)/.test(host)) return false;
+    if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return false;
+    if (/^[0-9a-f:]*:[0-9a-f:]+$/i.test(host)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function collectRelayKeys(req: any, body: any): string[] {
+  const out: string[] = [];
+  const push = (v: any) => {
+    if (typeof v === "string" && v.trim()) out.push(v.trim());
+  };
+  push(req.headers["x-api-key"]);
+  push(req.headers["x-gemini-key"]);
+  push((req.headers.authorization || "").replace(/^Bearer\s+/i, ""));
+  if (Array.isArray(body?.apiKeys)) body.apiKeys.forEach(push);
+  push(body?.clientApiKey);
+  return [...new Set(out)];
+}
+
+function resolveRelayTarget(body: any): { ok: boolean; providerId: string; providerName: string; baseUrl: string; error?: string } {
+  const providerId: string = body?.providerId || "prov-gemini";
+  const catalog = PROVIDER_CATALOG[providerId];
+  if (catalog) return { ok: true, providerId, providerName: catalog.name, baseUrl: catalog.baseUrl };
+  const custom = typeof body?.baseUrl === "string" ? body.baseUrl.trim() : "";
+  if (!custom || !isAllowedUpstream(custom)) {
+    return { ok: false, providerId, providerName: providerId, baseUrl: "", error: `Unknown providerId '${providerId}'. Use prov-gemini/prov-groq/prov-openrouter/prov-cerebras or a public https baseUrl.` };
+  }
+  return { ok: true, providerId, providerName: providerId, baseUrl: custom };
+}
+
+async function relayChatCompletion(opts: { baseUrl: string; apiKey: string; model: string; messages: any[]; maxTokens: number; temperature: number }): Promise<{ ok: boolean; status: number; data: any }> {
+  let resp: Response;
+  try {
+    resp = await fetch(`${opts.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${opts.apiKey}`,
+        "HTTP-Referer": "https://edge-ai-router.vercel.app",
+        "X-Title": "Edge Router",
+      },
+      body: JSON.stringify({ model: opts.model, messages: opts.messages, max_tokens: opts.maxTokens, temperature: opts.temperature }),
+    });
+  } catch (e: any) {
+    return { ok: false, status: 502, data: { message: `Upstream unreachable: ${e?.message || e}` } };
+  }
+  let data: any = null;
+  try {
+    data = await resp.json();
+  } catch {
+    data = { message: `Upstream bad response (HTTP ${resp.status})` };
+  }
+  return { ok: resp.ok, status: resp.status, data };
+}
+
+function wantedModelFor(providerId: string, model: any, fallback: string): string {
+  let wanted = (typeof model === "string" && model) || PROVIDER_CATALOG[providerId]?.defaultModel || fallback;
+  if (providerId === "prov-gemini" && LEGACY_GEMINI_ALIAS[wanted]) wanted = LEGACY_GEMINI_ALIAS[wanted];
+  return wanted;
+}
+
 // Helper to initialize GenAI client safely with server secret or user provided key
 async function getGenAIClient(customApiKey?: string): Promise<any> {
   const key = customApiKey || process.env.GEMINI_API_KEY;
@@ -105,6 +193,8 @@ CURRENT ROUTER STATE:
 - Total Endpoints: ${nodes}
 - Cross-Provider Fallback: ${fallback}
 - Average Latency: ${state?.avgLatency || "18"}ms
+- Site endpoint base: ${state?.siteBaseUrl || "(same origin)/api/v1"}
+- Provider catalog: ${(state?.providerCatalog || []).map((p: any) => `${p.id} (${p.baseUrl}, models: ${(p.models || []).slice(0, 3).join("/")}, key:${p.hasKey ? "yes" : "no"})`).join(" | ") || "prov-gemini"}
 
 COMPLETE ADMINISTRATIVE ACTION TAGS (EMIT THESE IN YOUR RESPONSE TO CONTROL THE ROUTER):
 Whenever the user asks you to configure, add, update, switch, or optimize anything, you MUST include the corresponding [ACTION:...] tag(s) in your response so the system immediately executes it:
@@ -154,6 +244,18 @@ Whenever the user asks you to configure, add, update, switch, or optimize anythi
    - Generate New Edge Router Proxy Key:
      [ACTION:GENERATE_PROXY_KEY]
 
+RESPONSE STYLE (STRICT — SHORT & PROFESSIONAL):
+1. Default reply: 2-4 lines summary + short bullets. No lectures, no filler words.
+2. Full detail/steps ONLY when the user explicitly asks (e.g. "detail me batao", "explain fully").
+3. When the user asks for a command, endpoint URL, key steps or code: give it FIRST in a fenced code block, then max 1-line note. Never bury commands inside paragraphs.
+4. Action receipts: one short line per executed action.
+
+SITE GATEWAY CONTEXT (use when user asks for endpoint/commands/snippets):
+- Public endpoint: {siteBaseUrl}/chat/completions (OpenAI-compatible). siteBaseUrl is given in CURRENT ROUTER STATE below.
+- Auth header: Authorization: Bearer <the user's own key for that provider>.
+- Provider catalog + key availability are in CURRENT ROUTER STATE as providerCatalog lines (id | baseUrl | models | key:yes/no).
+- Fill curl/python/node snippets with THESE exact values in fenced code blocks so the user can 1-click copy.
+
 CRITICAL LANGUAGE & VOICE MATCHING MANDATE:
 1. ALWAYS detect and reply in the EXACT SAME language, dialect, and script that the user uses:
    - If user speaks or writes in Hindi (देवनागरी या Roman Hinglish, e.g. "Tum kahan ho", "Site chala do"), reply in fluent, crystal-clear, friendly Hindi/Hinglish.
@@ -189,6 +291,7 @@ app.post("/api/copilot/chat", async (req, res) => {
       config: {
         systemInstruction,
         temperature: 0.7,
+        maxOutputTokens: 500,
       },
     });
 
@@ -238,55 +341,56 @@ app.post("/api/copilot/tts", async (req, res) => {
   }
 });
 
-// Internal alias of the single gateway for the in-app Tester (same per-user key, same Gemini backend)
+// Tester inference via generic multi-provider relay (per-provider keys, rotation).
 app.post("/api/router/inference", async (req, res) => {
   const startTime = Date.now();
   try {
-    const { prompt, model = "gemini-flash-latest", clientApiKey } = req.body;
-    const clientKey = (req.headers["x-gemini-key"] as string) || clientApiKey || process.env.GEMINI_API_KEY;
+    const body = req.body || {};
+    const { prompt, model, clientApiKey } = body;
+    const target = resolveRelayTarget(body);
+    if (!target.ok) return res.status(400).json({ error: target.error });
 
     if (!prompt || typeof prompt !== "string") {
       return res.status(400).json({ error: "Missing prompt parameter" });
     }
-    if (!clientKey) {
-      return res.status(401).json({ error: "Login required: pehle signup me Gemini key dalo." });
+    const keys = collectRelayKeys(req, body);
+    if (keys.length === 0) {
+      return res.status(401).json({ error: `Login required: ${target.providerName} ki key dalo (Provider Keys).` });
     }
 
-    // If API key is available, execute real Gemini call
-    if (clientKey) {
-      const ai = await getGenAIClient(clientKey);
-      let targetModel = "gemini-flash-latest";
-      if (model.includes("pro") || model.includes("r1") || model.includes("reasoner")) {
-        targetModel = "gemini-3.1-pro-preview";
-      } else if (model.includes("lite") || model.includes("instant")) {
-        targetModel = "gemini-3.1-flash-lite";
+    const wanted = wantedModelFor(target.providerId, model, "gemini-flash-latest");
+    let lastErr = "unknown error";
+    for (let i = 0; i < keys.length; i++) {
+      const r = await relayChatCompletion({
+        baseUrl: target.baseUrl,
+        apiKey: keys[i],
+        model: wanted,
+        messages: [{ role: "user", content: prompt }],
+        maxTokens: 600,
+        temperature: 0.7,
+      });
+      if (r.ok && r.data?.choices?.[0]) {
+        const latencyMs = Date.now() - startTime;
+        const text = r.data.choices[0].message?.content || "OK";
+        const tokens = r.data.usage?.total_tokens || Math.max(15, Math.ceil(text.length / 4) + Math.ceil(prompt.length / 4));
+        res.setHeader("X-Edge-Provider", target.providerId);
+        res.setHeader("X-Edge-Key-Index", String(i));
+        return res.json({
+          status: "ok",
+          isLive: true,
+          response: text,
+          modelUsed: r.data.model || wanted,
+          providerId: target.providerId,
+          providerName: target.providerName,
+          keyIndex: i,
+          latencyMs,
+          tokens,
+        });
       }
-
-      const aiResponse = await ai.models.generateContent({
-        model: targetModel,
-        contents: [{ parts: [{ text: prompt }] }],
-        config: {
-          maxOutputTokens: 600,
-          temperature: 0.7,
-        },
-      });
-
-      const latencyMs = Date.now() - startTime;
-      const text = aiResponse.text || "OK";
-      const tokens = Math.max(15, Math.ceil(text.length / 4) + Math.ceil(prompt.length / 4));
-
-      return res.json({
-        status: "ok",
-        isLive: true,
-        response: text,
-        modelUsed: targetModel,
-        latencyMs,
-        tokens,
-      });
+      lastErr = r.data?.error?.message || r.data?.message || `Upstream HTTP ${r.status}`;
+      if (![401, 403, 429, 500, 502, 503, 504].includes(r.status)) break;
     }
-
-    // No simulated fake success: without key we already 401 above. Unreachable guard.
-    return res.status(401).json({ error: "Login required: pehle signup me Gemini key dalo." });
+    return res.status(502).json({ error: `${target.providerName}: ${lastErr} (${keys.length} keys tried)` });
   } catch (err: any) {
     console.error("Inference route error:", err);
     const latencyMs = Date.now() - startTime;
@@ -297,79 +401,89 @@ app.post("/api/router/inference", async (req, res) => {
   }
 });
 
-// SINGLE public gateway — sole endpoint for all external clients (site Export tab, curl, Python, OpenCode)
+// Multi-provider public gateway (OpenAI-compatible) with per-provider key rotation.
 app.post("/api/v1/chat/completions", async (req, res) => {
   const startTime = Date.now();
   try {
-    const clientKey = resolvePublicUserKey(req);
-
-    const { messages = [], model = "gemini-flash-latest", max_tokens = 800, temperature = 0.7 } = req.body;
+    const body = req.body || {};
+    const { messages = [], model, max_tokens = 800, temperature = 0.7 } = body;
+    const target = resolveRelayTarget(body);
+    if (!target.ok) {
+      return res.status(400).json({ error: { message: target.error, type: "invalid_request_error" } });
+    }
 
     if (!Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: { message: "Invalid messages array", type: "invalid_request_error" } });
     }
 
-    if (!clientKey) {
+    const keys = collectRelayKeys(req, body);
+    if (keys.length === 0) {
       return res.status(401).json({
         error: {
-          message: "Login required: signup me apni Gemini key (AI Studio wali) dalo, fir usko Authorization: Bearer <TUMHARI_KEY> me bhejo. Endpoint single hai, key har user ki alag.",
+          message: `Is provider (${target.providerName}) ki key dalo. Login karke Provider Keys me add karo, fir Authorization: Bearer <KEY> bhejo.`,
           type: "authentication_error",
         },
       });
     }
 
-    const ai = await getGenAIClient(clientKey);
-    let targetModel = "gemini-flash-latest";
-    if (model.includes("pro") || model.includes("r1") || model.includes("gpt-4")) {
-      targetModel = "gemini-3.1-pro-preview";
-    }
-
-    const contents = messages.map((m: any) => ({
-      role: m.role === "user" ? "user" : "model",
-      parts: [{ text: m.content || "" }],
+    const wanted = wantedModelFor(target.providerId, model, "gemini-flash-latest");
+    const openaiMessages = messages.map((m: any) => ({
+      role: m.role === "system" || m.role === "assistant" || m.role === "user" ? m.role : "user",
+      content: typeof m.content === "string" ? m.content : "",
     }));
 
-    const aiResponse = await ai.models.generateContent({
-      model: targetModel,
-      contents,
-      config: {
-        maxOutputTokens: max_tokens,
-        temperature,
-      },
-    });
-
-    const latencyMs = Date.now() - startTime;
-    const responseText = aiResponse.text || "";
-    const promptTokens = messages.reduce((acc: number, m: any) => acc + Math.ceil((m.content || "").length / 4), 0);
-    const completionTokens = Math.ceil(responseText.length / 4);
-
-    res.setHeader("X-Edge-Latency-Ms", latencyMs.toString());
-    res.setHeader("X-Edge-Router-Region", "global-anycast");
-
-    return res.json({
-      id: "chatcmpl-" + Math.random().toString(36).substring(2, 11),
-      object: "chat.completion",
-      created: Math.floor(Date.now() / 1000),
-      model: targetModel,
-      choices: [
-        {
-          index: 0,
-          message: {
-            role: "assistant",
-            content: responseText,
+    let lastErr = "unknown error";
+    for (let i = 0; i < keys.length; i++) {
+      const r = await relayChatCompletion({ baseUrl: target.baseUrl, apiKey: keys[i], model: wanted, messages: openaiMessages, maxTokens: max_tokens, temperature });
+      if (r.ok) {
+        const latencyMs = Date.now() - startTime;
+        const d = r.data || {};
+        const choice = d.choices?.[0];
+        const responseText = choice?.message?.content || "";
+        const usage = d.usage || {};
+        const promptTokens = usage.prompt_tokens ?? openaiMessages.reduce((acc: number, m: any) => acc + Math.ceil((m.content || "").length / 4), 0);
+        const completionTokens = usage.completion_tokens ?? Math.ceil(responseText.length / 4);
+        res.setHeader("X-Edge-Provider", target.providerId);
+        res.setHeader("X-Edge-Key-Index", String(i));
+        res.setHeader("X-Edge-Keys-Tried", String(i + 1));
+        res.setHeader("X-Edge-Latency-Ms", latencyMs.toString());
+        res.setHeader("X-Edge-Router-Region", "global-anycast");
+        return res.json({
+          id: d.id || "chatcmpl-" + Math.random().toString(36).substring(2, 11),
+          object: "chat.completion",
+          created: d.created || Math.floor(Date.now() / 1000),
+          model: d.model || wanted,
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: responseText },
+              finish_reason: choice?.finish_reason || "stop",
+            },
+          ],
+          usage: {
+            prompt_tokens: promptTokens,
+            completion_tokens: completionTokens,
+            total_tokens: promptTokens + completionTokens,
           },
-          finish_reason: "stop",
-        },
-      ],
-      usage: {
-        prompt_tokens: promptTokens,
-        completion_tokens: completionTokens,
-        total_tokens: promptTokens + completionTokens,
-      },
-      edge_routing: {
-        provider: "Edge AI Mesh",
-        latency_ms: latencyMs,
-        status: "200 OK",
+          edge_routing: {
+            provider: target.providerName,
+            provider_id: target.providerId,
+            key_index: i,
+            keys_tried: i + 1,
+            latency_ms: latencyMs,
+            status: "200 OK",
+          },
+        });
+      }
+      lastErr = r.data?.error?.message || r.data?.message || `Upstream HTTP ${r.status}`;
+      if (![401, 403, 429, 500, 502, 503, 504].includes(r.status)) break;
+    }
+
+    return res.status(502).json({
+      error: {
+        message: `${target.providerName}: ${lastErr} (${keys.length} keys tried)`,
+        type: "upstream_error",
+        provider_id: target.providerId,
       },
     });
   } catch (err: any) {
