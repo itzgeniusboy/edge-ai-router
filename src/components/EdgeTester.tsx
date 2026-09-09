@@ -19,6 +19,7 @@ import { Endpoint, Provider, RoutingPolicy, RoutingDecision } from '../types/rou
 import { EdgeRouterEngine } from '../services/edgeRouterEngine';
 import { SmartPromptRouter, PromptAnalysis } from '../services/autonomousWatchdog';
 import { SkeletonLoader } from './SkeletonLoader';
+import { getActiveGeminiKey } from '../utils/auth';
 
 interface EdgeTesterProps {
   activeProvider: Provider;
@@ -94,29 +95,36 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
         }
       );
 
-      // 2. Real Live Inference Execution via Server Proxy
+      // 2. Real Live Inference via SINGLE gateway (/api/v1/chat/completions) + per-user key
       if (enableRealInference) {
         try {
-          const res = await fetch('/api/router/inference', {
+          const t0 = Date.now();
+          const userKey = getActiveGeminiKey();
+          const res = await fetch('/api/v1/chat/completions', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'x-gemini-key': localStorage.getItem('er_gemini_key') || '',
+              ...(userKey ? { 'Authorization': `Bearer ${userKey}`, 'x-gemini-key': userKey } : {}),
             },
             body: JSON.stringify({
-              prompt,
               model: selectedModel,
-              providerId: decision.providerId,
-              clientApiKey: localStorage.getItem(`er_api_key_${decision.providerId}`) || '',
+              messages: [{ role: 'user', content: prompt }],
+              max_tokens: 600,
+              temperature: 0.7,
             }),
           });
 
           if (res.ok) {
             const data = await res.json();
-            decision.responsePayload = data.response;
-            decision.latencyMs = data.latencyMs;
-            decision.tokensUsed = data.tokens;
-            decision.isLive = data.isLive;
+            const text = data.choices?.[0]?.message?.content || '';
+            decision.responsePayload = text;
+            const hdr = res.headers.get('X-Edge-Latency-Ms');
+            decision.latencyMs = hdr ? Number(hdr) : Date.now() - t0;
+            decision.tokensUsed = data.usage?.total_tokens || decision.tokensUsed;
+            decision.isLive = true;
+          } else if (res.status === 401) {
+            decision.responsePayload = 'Login required: signup me apni Gemini key dalo.';
+            decision.isLive = false;
           }
         } catch (netErr) {
           console.warn('Live inference call warning:', netErr);

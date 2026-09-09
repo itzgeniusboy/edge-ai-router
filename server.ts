@@ -7,11 +7,21 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-const PORT = 3000;
+const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 const app = express();
 const server = http.createServer(app);
 
 app.use(express.json({ limit: "10mb" }));
+
+// SINGLE-GATEWAY MODE: sole public endpoint is POST /api/v1/chat/completions.
+// Every user sends their OWN Gemini key via Authorization: Bearer <AIza...> or x-gemini-key.
+// No server-key fallback on the public gateway (prevents quota burn).
+function resolvePublicUserKey(req: any): string {
+  const headerKey = (req.headers["x-gemini-key"] as string) || "";
+  const authHeader = (req.headers.authorization as string) || "";
+  const bearer = authHeader.replace(/^Bearer\s+/i, "").trim();
+  return headerKey.trim() || bearer;
+}
 
 // Helper to initialize GenAI client safely with server secret or user provided key
 function getGenAIClient(customApiKey?: string): GoogleGenAI {
@@ -215,15 +225,18 @@ app.post("/api/copilot/tts", async (req, res) => {
   }
 });
 
-// Live Edge Router Inference Execution
+// Internal alias of the single gateway for the in-app Tester (same per-user key, same Gemini backend)
 app.post("/api/router/inference", async (req, res) => {
   const startTime = Date.now();
   try {
-    const { prompt, model = "gemini-2.5-flash", providerId, clientApiKey } = req.body;
+    const { prompt, model = "gemini-2.5-flash", clientApiKey } = req.body;
     const clientKey = (req.headers["x-gemini-key"] as string) || clientApiKey || process.env.GEMINI_API_KEY;
 
     if (!prompt || typeof prompt !== "string") {
       return res.status(400).json({ error: "Missing prompt parameter" });
+    }
+    if (!clientKey) {
+      return res.status(401).json({ error: "Login required: pehle signup me Gemini key dalo." });
     }
 
     // If API key is available, execute real Gemini call
@@ -259,16 +272,8 @@ app.post("/api/router/inference", async (req, res) => {
       });
     }
 
-    // If no key configured, return high-speed simulated response
-    const latencyMs = Math.floor(Math.random() * 8) + 12;
-    return res.json({
-      status: "ok",
-      isLive: false,
-      response: `[Simulated Edge Response for ${providerId || "Provider"}] Prompt: "${prompt.slice(0, 60)}...". Add your GEMINI_API_KEY in settings or copilot for real live inference!`,
-      modelUsed: model,
-      latencyMs,
-      tokens: 42,
-    });
+    // No simulated fake success: without key we already 401 above. Unreachable guard.
+    return res.status(401).json({ error: "Login required: pehle signup me Gemini key dalo." });
   } catch (err: any) {
     console.error("Inference route error:", err);
     const latencyMs = Date.now() - startTime;
@@ -279,13 +284,11 @@ app.post("/api/router/inference", async (req, res) => {
   }
 });
 
-// Universal OpenAI / Gemini Compatible Proxy Endpoint for Edge Router Clients
+// SINGLE public gateway — sole endpoint for all external clients (site Export tab, curl, Python, OpenCode)
 app.post("/api/v1/chat/completions", async (req, res) => {
   const startTime = Date.now();
   try {
-    const authHeader = req.headers.authorization || "";
-    const bearerToken = authHeader.replace(/^Bearer\s+/i, "").trim();
-    const clientKey = (req.headers["x-gemini-key"] as string) || (bearerToken.startsWith("AIzaSy") ? bearerToken : process.env.GEMINI_API_KEY);
+    const clientKey = resolvePublicUserKey(req);
 
     const { messages = [], model = "gemini-2.5-flash", max_tokens = 800, temperature = 0.7 } = req.body;
 
@@ -296,7 +299,7 @@ app.post("/api/v1/chat/completions", async (req, res) => {
     if (!clientKey) {
       return res.status(401).json({
         error: {
-          message: "No valid API key provided. Pass your Gemini API key in the Authorization header: Bearer <API_KEY> or configure GEMINI_API_KEY.",
+          message: "Login required: signup me apni Gemini key (AIzaSy...) dalo, fir usko Authorization: Bearer <TUMHARI_KEY> me bhejo. Endpoint single hai, key har user ki alag.",
           type: "authentication_error",
         },
       });
