@@ -58,6 +58,25 @@ Baaki routes: `GET /api/health`, `GET /api/ping`,
 `POST /api/copilot/chat`, `POST /api/copilot/tts`,
 `POST /api/router/inference` (sab JSON; crash page kabhi nahi).
 
+## Unique master key (link + 1 key = sab providers)
+
+Export tab → **Generate** dabao: tumhare saare provider pools ek encrypted
+`er1...` master key me lock ho jayenge (90 din valid, per-provider max 20 keys).
+Bahar ke tools me **site link + master key** dalo — background me pools se relay hoga.
+Raw provider keys kabhi share mat karo.
+
+- **Regenerate:** anytime (nayi expiry). Pool badle to stale warning aayega.
+- **Delete:** app se turant + server-side revoke. Global instant-revoke ke liye
+  Vercel KV connect karo (Storage → Create → KV → project connect;
+  `KV_REST_API_URL` + `KV_REST_API_TOKEN` auto-inject honge). Bina KV ke
+  local-delete + expiry kaam karega.
+- **Dead keys:** 401/403 wali key auto-quarantine (Gmail tag samet notice),
+  KEYS me Revive ya replace karo.
+- **Secret:** `MASTER_KEY_SECRET` env lagao production me, nahi to built-in
+  fallback (kaam karega, determined attacker ke liye kamzor — README me saf).
+- `POST /api/keys/issue` (mint), `POST /api/keys/status` (counts+gmails, keys never),
+  `POST /api/keys/revoke` (blocklist).
+
 ## Architecture notes
 
 - `api/*.ts` = Vercel serverless functions. **RULE: koi relative `.ts` cross-import nahi**

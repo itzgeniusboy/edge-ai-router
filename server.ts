@@ -2,6 +2,8 @@ import express from "express";
 import http from "http";
 import path from "path";
 import dotenv from "dotenv";
+import crypto from "node:crypto";
+import { inflateSync, deflateSync } from "node:zlib";
 
 dotenv.config();
 
@@ -29,9 +31,7 @@ app.use(express.json({ limit: "10mb" }));
 // No server-key fallback on the public gateway (prevents quota burn).
 function resolvePublicUserKey(req: any): string {
   const headerKey = (req.headers["x-gemini-key"] as string) || "";
-  const authHeader = (req.headers.authorization as string) || "";
-  const bearer = authHeader.replace(/^Bearer\s+/i, "").trim();
-  return headerKey.trim() || bearer;
+  return headerKey.trim() || bearerTokenLocal(req);
 }
 
 // Multi-provider catalog (OpenAI-compatible base URLs). No secrets here — keys always per-user.
@@ -67,6 +67,14 @@ function isAllowedUpstream(raw: string): boolean {
   }
 }
 
+function bearerTokenLocal(req: any): string {
+  const h = typeof req.headers?.authorization === "string" ? req.headers.authorization : "";
+  const m = h.match(/^Bearer\s*(.*)$/i);
+  const tok = (m ? m[1] : h).trim();
+  if (!tok || tok.toLowerCase() === "bearer") return "";
+  return tok;
+}
+
 function collectRelayKeys(req: any, body: any): string[] {
   const out: string[] = [];
   const push = (v: any) => {
@@ -74,7 +82,7 @@ function collectRelayKeys(req: any, body: any): string[] {
   };
   push(req.headers["x-api-key"]);
   push(req.headers["x-gemini-key"]);
-  push((req.headers.authorization || "").replace(/^Bearer\s+/i, ""));
+  push(bearerTokenLocal(req));
   if (Array.isArray(body?.apiKeys)) body.apiKeys.forEach(push);
   push(body?.clientApiKey);
   return [...new Set(out)];
@@ -120,6 +128,103 @@ function wantedModelFor(providerId: string, model: any, fallback: string): strin
   let wanted = (typeof model === "string" && model) || PROVIDER_CATALOG[providerId]?.defaultModel || fallback;
   if (providerId === "prov-gemini" && LEGACY_GEMINI_ALIAS[wanted]) wanted = LEGACY_GEMINI_ALIAS[wanted];
   return wanted;
+}
+
+// ---- Master key (er1.) support, mirrored from api/v1 (local-dev parity) ----
+const MASTER_PREFIX = "er1.";
+
+function masterSecretBuf(): Buffer {
+  return crypto
+    .createHash("sha256")
+    .update(process.env.MASTER_KEY_SECRET || "er-dev-fallback-secret-v1-do-not-use-in-prod")
+    .digest();
+}
+
+function masterDecryptLocal(token: string): any {
+  if (typeof token !== "string" || !token.startsWith(MASTER_PREFIX)) {
+    const e: any = new Error("not-a-master-key");
+    e.code = "NOT_MASTER";
+    throw e;
+  }
+  let payload: any;
+  try {
+    const raw = Buffer.from(token.slice(MASTER_PREFIX.length), "base64url");
+    if (raw.length < 29) throw new Error("bad");
+    const iv = raw.subarray(0, 12);
+    const tag = raw.subarray(raw.length - 16);
+    const ct = raw.subarray(12, raw.length - 16);
+    const d = crypto.createDecipheriv("aes-256-gcm", masterSecretBuf(), iv);
+    d.setAuthTag(tag);
+    payload = JSON.parse(inflateSync(Buffer.concat([d.update(ct), d.final()])).toString("utf8"));
+  } catch (err: any) {
+    if (err?.code === "NOT_MASTER") throw err;
+    const e: any = new Error("bad-master-key");
+    e.code = "BAD_MASTER";
+    throw e;
+  }
+  if (!payload || payload.v !== 1 || typeof payload.exp !== "number" || typeof payload.keys !== "object") {
+    const e: any = new Error("bad-master-key");
+    e.code = "BAD_MASTER";
+    throw e;
+  }
+  if (payload.exp <= Date.now()) {
+    const e: any = new Error("master-key-expired");
+    e.code = "EXPIRED";
+    throw e;
+  }
+  return payload;
+}
+
+async function isMasterRevokedLocal(mid: string): Promise<boolean> {
+  const url = process.env.KV_REST_API_URL;
+  const tok = process.env.KV_REST_API_TOKEN;
+  if (!url || !tok || !mid) return false;
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 2500);
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
+      body: JSON.stringify(["GET", `er:revoked:${mid}`]),
+      signal: ctl.signal,
+    });
+    clearTimeout(t);
+    const j: any = await r.json().catch(() => null);
+    return j?.result === "1";
+  } catch {
+    return false;
+  }
+}
+
+// Resolve effective key pool: master key (er1.) wins when present, else direct keys.
+async function resolveKeyPool(
+  req: any,
+  body: any,
+  providerId: string
+): Promise<{ keys: string[]; error?: string }> {
+  const keys = collectRelayKeys(req, body);
+  const maybeMaster =
+    keys.find((k) => k.startsWith(MASTER_PREFIX)) ||
+    (typeof body.masterKey === "string" && body.masterKey.trim().startsWith(MASTER_PREFIX) ? body.masterKey.trim() : "");
+  if (!maybeMaster) return { keys };
+  let payload: any;
+  try {
+    payload = masterDecryptLocal(maybeMaster);
+  } catch (e: any) {
+    return {
+      keys: [],
+      error: e?.code === "EXPIRED" ? "Master key expire ho gayi — site se Regenerate karo." : "Master key invalid hai — site se dobara copy karo.",
+    };
+  }
+  if (await isMasterRevokedLocal(payload.mid)) {
+    return { keys: [], error: "Ye master key revoke (delete) ho chuki hai — nayi generate karo." };
+  }
+  const pool = payload.keys?.[providerId];
+  const arr = Array.isArray(pool) ? pool.map((e: any) => (typeof e === "string" ? e : e?.k)).filter((k: any) => typeof k === "string" && k) : [];
+  if (arr.length === 0) {
+    return { keys: [], error: "Is master key me is provider ki koi key nahi hai." };
+  }
+  return { keys: arr };
 }
 
 // Helper to initialize GenAI client safely with server secret or user provided key
@@ -255,6 +360,13 @@ SITE GATEWAY CONTEXT (use when user asks for endpoint/commands/snippets):
 - Auth header: Authorization: Bearer <the user's own key for that provider>.
 - Provider catalog + key availability are in CURRENT ROUTER STATE as providerCatalog lines (id | baseUrl | models | key:yes/no).
 - Fill curl/python/node snippets with THESE exact values in fenced code blocks so the user can 1-click copy.
+
+MASTER KEY FLOW (external tools ke liye — endpoint/commands maangne pe):
+- Site endpoint: {siteBaseUrl}/chat/completions (OpenAI-compatible). siteBaseUrl CURRENT ROUTER STATE me hai.
+- Har user ki UNIQUE master key: Export tab → Generate. Raw provider keys bahar share mat karwao.
+- Master me saari provider keys embedded hoti hai (90 din valid); Delete = turant cut; Regenerate = nayi.
+- Pool badle (key add/remove) to master Regenerate karni padti hai.
+- Koi key dead ho to uski Gmail tag batao taaki user usi account se nayi nikaal le.
 
 CRITICAL LANGUAGE & VOICE MATCHING MANDATE:
 1. ALWAYS detect and reply in the EXACT SAME language, dialect, and script that the user uses:
@@ -416,11 +528,12 @@ app.post("/api/v1/chat/completions", async (req, res) => {
       return res.status(400).json({ error: { message: "Invalid messages array", type: "invalid_request_error" } });
     }
 
-    const keys = collectRelayKeys(req, body);
+    const pool = await resolveKeyPool(req, body, target.providerId);
+    const keys = pool.keys;
     if (keys.length === 0) {
       return res.status(401).json({
         error: {
-          message: `Is provider (${target.providerName}) ki key dalo. Login karke Provider Keys me add karo, fir Authorization: Bearer <KEY> bhejo.`,
+          message: pool.error || `Is provider (${target.providerName}) ki key dalo. Login karke Provider Keys me add karo, fir Authorization: Bearer <KEY> bhejo.`,
           type: "authentication_error",
         },
       });
@@ -433,6 +546,8 @@ app.post("/api/v1/chat/completions", async (req, res) => {
     }));
 
     let lastErr = "unknown error";
+    const deadKeyIndexes: number[] = [];
+    const deadKeyPrefixes: string[] = [];
     for (let i = 0; i < keys.length; i++) {
       const r = await relayChatCompletion({ baseUrl: target.baseUrl, apiKey: keys[i], model: wanted, messages: openaiMessages, maxTokens: max_tokens, temperature });
       if (r.ok) {
@@ -470,12 +585,18 @@ app.post("/api/v1/chat/completions", async (req, res) => {
             provider_id: target.providerId,
             key_index: i,
             keys_tried: i + 1,
+            dead_key_indexes: deadKeyIndexes,
+            dead_key_prefixes: deadKeyPrefixes,
             latency_ms: latencyMs,
             status: "200 OK",
           },
         });
       }
       lastErr = r.data?.error?.message || r.data?.message || `Upstream HTTP ${r.status}`;
+      if ((r.status === 401 || r.status === 403) && typeof keys[i] === "string") {
+        deadKeyIndexes.push(i);
+        deadKeyPrefixes.push(keys[i].slice(0, 8));
+      }
       if (![401, 403, 429, 500, 502, 503, 504].includes(r.status)) break;
     }
 
@@ -484,6 +605,8 @@ app.post("/api/v1/chat/completions", async (req, res) => {
         message: `${target.providerName}: ${lastErr} (${keys.length} keys tried)`,
         type: "upstream_error",
         provider_id: target.providerId,
+        dead_key_indexes: deadKeyIndexes,
+        dead_key_prefixes: deadKeyPrefixes,
       },
     });
   } catch (err: any) {
@@ -494,6 +617,132 @@ app.post("/api/v1/chat/completions", async (req, res) => {
         type: "internal_server_error",
       },
     });
+  }
+});
+
+// ---- Master key issue/status/revoke (local-dev parity with api/keys/*) ----
+const MASTER_TTL_MS = 90 * 86400 * 1000;
+const MAX_KEYS_PER_PROVIDER = 20;
+const MAX_KEYS_TOTAL = 80;
+
+function masterEncryptLocal(payload: any): string {
+  const raw = deflateSync(Buffer.from(JSON.stringify(payload), "utf8"));
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv("aes-256-gcm", masterSecretBuf(), iv);
+  const ct = Buffer.concat([c.update(raw), c.final()]);
+  return MASTER_PREFIX + Buffer.concat([iv, ct, c.getAuthTag()]).toString("base64url");
+}
+
+function extractMasterLocal(req: any, body: any): string {
+  const cands = [req.headers?.["x-master-key"], bearerTokenLocal(req), body?.masterKey];
+  for (const c of cands) {
+    if (typeof c === "string" && c.trim().startsWith(MASTER_PREFIX)) return c.trim();
+  }
+  return "";
+}
+
+async function kvSetExLocal(key: string, val: string, secs: number): Promise<boolean> {
+  const url = process.env.KV_REST_API_URL;
+  const tok = process.env.KV_REST_API_TOKEN;
+  if (!url || !tok) return false;
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 2500);
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
+      body: JSON.stringify(["SET", key, val, "EX", String(Math.max(60, Math.floor(secs)))]),
+      signal: ctl.signal,
+    });
+    clearTimeout(t);
+    const j: any = await r.json().catch(() => null);
+    return j?.result === "OK";
+  } catch {
+    return false;
+  }
+}
+
+app.post("/api/keys/issue", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const input = body.keys && typeof body.keys === "object" ? body.keys : null;
+    if (!input) return res.status(400).json({ error: "Missing keys object" });
+    const label = typeof body.label === "string" ? body.label.slice(0, 40) : "";
+    const pools: Record<string, { k: string; g: string }[]> = {};
+    let total = 0;
+    for (const pid of Object.keys(input)) {
+      if (!Array.isArray(input[pid])) return res.status(400).json({ error: `keys['${pid}'] array honi chahiye` });
+      if (input[pid].length > MAX_KEYS_PER_PROVIDER) return res.status(400).json({ error: `${pid}: max ${MAX_KEYS_PER_PROVIDER} keys per provider` });
+      const arr: { k: string; g: string }[] = [];
+      for (const v of input[pid]) {
+        const k = typeof v === "string" ? v.replace(/[\s'"`]+/g, "").trim() : typeof v?.k === "string" ? v.k.replace(/[\s'"`]+/g, "").trim() : "";
+        if (k.length < 10) return res.status(400).json({ error: `${pid}: ek key bahut chhoti hai` });
+        const rawG = typeof v?.g === "string" ? v.g.trim() : "";
+        arr.push({ k, g: /.+@.+\..{2,}/.test(rawG) ? rawG : "" });
+        total++;
+      }
+      if (arr.length > 0) pools[pid] = arr;
+    }
+    if (total === 0) return res.status(400).json({ error: "Kam se kam 1 key dalo" });
+    if (total > MAX_KEYS_TOTAL) return res.status(400).json({ error: `Max ${MAX_KEYS_TOTAL} keys per master key.` });
+    const mid = crypto.randomBytes(8).toString("hex");
+    const exp = Date.now() + MASTER_TTL_MS;
+    const masterKey = masterEncryptLocal({ v: 1, mid, exp, label, keys: pools });
+    const providers: Record<string, { count: number; gmails: string[] }> = {};
+    for (const pid of Object.keys(pools)) {
+      providers[pid] = { count: pools[pid].length, gmails: [...new Set(pools[pid].map((e) => e.g).filter(Boolean))] };
+    }
+    return res.json({ masterKey, mid, label, expiresAt: exp, providers });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Issue fail ho gaya" });
+  }
+});
+
+app.post("/api/keys/status", async (req, res) => {
+  try {
+    const token = extractMasterLocal(req, req.body || {});
+    if (!token) return res.status(401).json({ valid: false, error: "Master key (er1...) dalo." });
+    let payload: any;
+    try {
+      payload = masterDecryptLocal(token);
+    } catch {
+      return res.status(401).json({ valid: false, error: "Master key invalid hai." });
+    }
+    const providers: Record<string, { count: number; gmails: string[] }> = {};
+    for (const pid of Object.keys(payload.keys || {})) {
+      const arr = Array.isArray(payload.keys[pid]) ? payload.keys[pid] : [];
+      providers[pid] = {
+        count: arr.length,
+        gmails: [...new Set(arr.map((e: any) => (typeof e?.g === "string" ? e.g : "")).filter(Boolean))],
+      };
+    }
+    return res.json({ valid: true, mid: payload.mid || "", label: payload.label || "", expiresAt: payload.exp, providers });
+  } catch {
+    return res.status(500).json({ valid: false, error: "Status fail ho gaya" });
+  }
+});
+
+app.post("/api/keys/revoke", async (req, res) => {
+  try {
+    const token = extractMasterLocal(req, req.body || {});
+    if (!token) return res.status(400).json({ revoked: false, error: "Master key (er1...) dalo." });
+    let payload: any;
+    try {
+      payload = masterDecryptLocal(token);
+    } catch {
+      return res.status(400).json({ revoked: false, error: "Master key invalid hai." });
+    }
+    const mid = typeof payload?.mid === "string" ? payload.mid : "";
+    if (!mid) return res.status(400).json({ revoked: false, error: "Master key invalid hai." });
+    if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
+      return res.json({ revoked: false, mode: "local-only", message: "KV connected nahi hai — app se key hata do." });
+    }
+    const ttlSecs = Math.max(60, Math.floor(((payload.exp || Date.now()) - Date.now()) / 1000));
+    const ok = await kvSetExLocal(`er:revoked:${mid}`, "1", ttlSecs);
+    if (!ok) return res.status(502).json({ revoked: false, mode: "kv-error", error: "KV write fail — dobara try karo." });
+    return res.json({ revoked: true, mode: "global", mid, message: "Master key turant cut." });
+  } catch {
+    return res.status(500).json({ revoked: false, error: "Revoke fail ho gaya" });
   }
 });
 
