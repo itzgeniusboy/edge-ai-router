@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Key, X, Plus, Trash2, Eye, EyeOff, RotateCcw, Mail } from 'lucide-react';
 import type { Provider } from '../types/router';
-import { getProviderKeyEntries, getProviderKeys, addProviderKey, removeProviderKey, reviveProviderKey, maskKey } from '../utils/providerKeys';
+import { getProviderKeyEntries, getProviderKeys, addProviderKey, removeProviderKey, reviveProviderKey, maskKey, detectKeyUpstream, UPSTREAM_NAMES } from '../utils/providerKeys';
 import { notify } from '../utils/notify';
 
 interface ProviderKeysModalProps {
@@ -93,7 +93,7 @@ export const ProviderKeysModal: React.FC<ProviderKeysModalProps> = ({
                   <div key={`${p.id}-${i}`} className={`flex items-center justify-between gap-2 px-2 py-1.5 border ${e.s === 'dead' ? 'bg-rose-950/40 border-rose-800/60' : 'bg-neutral-900 border-neutral-800'}`}>
                     <div className="min-w-0 flex-1">
                       <code className="text-[11px] text-neutral-300 truncate block">
-                        #{i + 1} {showMap[`${p.id}:${i}`] ? e.k : maskKey(e.k)}
+                        #{i + 1} [{UPSTREAM_NAMES[detectKeyUpstream(e.k)] || '?'}] {showMap[`${p.id}:${i}`] ? e.k : maskKey(e.k)}
                       </code>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         {e.g && (

@@ -141,8 +141,14 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
             decision.latencyMs = hdr ? Number(hdr) : Date.now() - t0;
             decision.tokensUsed = data.usage?.total_tokens || decision.tokensUsed;
             decision.isLive = true;
-            const ki = data.edge_routing?.key_index;
-            if (typeof ki === 'number') {
+            // Prefer key_prefix match (order-proof), fallback to key_index
+            const kp = data.edge_routing?.key_prefix;
+            let ki = typeof data.edge_routing?.key_index === 'number' ? data.edge_routing.key_index : -1;
+            if (typeof kp === 'string' && kp) {
+              const found = pool.findIndex((k) => k.startsWith(kp));
+              if (found !== -1) ki = found;
+            }
+            if (ki >= 0) {
               decision.apiKeyIndex = ki;
               if (reviveProviderKey(decision.providerId, ki)) {
                 notify('success', `Key wapas live: ${decision.providerName} #${ki + 1}`, 'Dead mark hata diya.');

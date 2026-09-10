@@ -12,6 +12,75 @@ export interface KeyEntry {
 
 export const MAX_KEYS_PER_PROVIDER = 20;
 
+export const UNIVERSAL_PROVIDER_ID = "prov-universal";
+
+// Legacy provider IDs (purane pools/chains se) — sab universal me merge hote hai.
+export const LEGACY_POOL_IDS: string[] = [
+  "prov-gemini",
+  "prov-groq",
+  "prov-openrouter",
+  "prov-cerebras",
+];
+
+// Key prefix se upstream auto-detect (user ko kuch batane ki zaroorat nahi).
+export function detectKeyUpstream(key: string): string {
+  const k = (key || "").trim();
+  if (/^AIza[0-9A-Za-z\-_]{20,}/.test(k) || /^AQ\.[A-Za-z0-9\-_.]{40,}/.test(k)) return "prov-gemini";
+  if (k.startsWith("gsk_")) return "prov-groq";
+  if (k.startsWith("sk-or-")) return "prov-openrouter";
+  if (k.startsWith("csk-")) return "prov-cerebras";
+  return "unknown";
+}
+
+export const UPSTREAM_NAMES: Record<string, string> = {
+  "prov-gemini": "Gemini",
+  "prov-groq": "Groq",
+  "prov-openrouter": "OpenRouter",
+  "prov-cerebras": "Cerebras",
+  unknown: "?",
+};
+
+// Purani per-provider pools (+ legacy singles) ko universal pool me merge karo.
+// Keys + gmail + status safe rehte hai. Returns merged count.
+export function migratePoolsToUniversal(): number {
+  try {
+    const seen = new Set<string>();
+    const merged: KeyEntry[] = [];
+    const take = (entries: KeyEntry[]) => {
+      entries.forEach((e) => {
+        if (e?.k && !seen.has(e.k)) {
+          seen.add(e.k);
+          merged.push(e);
+        }
+      });
+    };
+    take(getProviderKeyEntries(UNIVERSAL_PROVIDER_ID));
+    LEGACY_POOL_IDS.forEach((pid) => {
+      if (pid === UNIVERSAL_PROVIDER_ID) return;
+      take(getProviderKeyEntries(pid));
+    });
+    // Legacy single slots (bahut purana data)
+    ["er_gemini_key"].forEach((slot) => {
+      const v = localStorage.getItem(slot);
+      if (v && v.trim() && !seen.has(v.trim())) {
+        seen.add(v.trim());
+        merged.push({ k: v.trim(), g: "", s: "active", a: Date.now() });
+      }
+    });
+    localStorage.setItem(`er_api_keys_${UNIVERSAL_PROVIDER_ID}`, JSON.stringify(merged));
+    // Purane pool slots saaf karo (double-count se bachao)
+    LEGACY_POOL_IDS.forEach((pid) => {
+      if (pid !== UNIVERSAL_PROVIDER_ID) {
+        localStorage.removeItem(`er_api_keys_${pid}`);
+        localStorage.removeItem(`er_api_key_${pid}`);
+      }
+    });
+    return merged.length;
+  } catch {
+    return 0;
+  }
+}
+
 function poolKey(providerId: string): string {
   return `er_api_keys_${providerId}`;
 }

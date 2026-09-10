@@ -34,13 +34,68 @@ function resolvePublicUserKey(req: any): string {
   return headerKey.trim() || bearerTokenLocal(req);
 }
 
-// Multi-provider catalog (OpenAI-compatible base URLs). No secrets here — keys always per-user.
-const PROVIDER_CATALOG: Record<string, { name: string; baseUrl: string; defaultModel: string }> = {
+// Universal upstream table (ONE virtual provider; model naam se auto-route).
+const UPSTREAMS: Record<string, { name: string; baseUrl: string; defaultModel: string }> = {
   "prov-gemini": { name: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", defaultModel: "gemini-flash-latest" },
   "prov-groq": { name: "Groq", baseUrl: "https://api.groq.com/openai/v1", defaultModel: "llama-3.3-70b-versatile" },
   "prov-openrouter": { name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", defaultModel: "openai/gpt-4o-mini" },
   "prov-cerebras": { name: "Cerebras", baseUrl: "https://api.cerebras.ai/v1", defaultModel: "llama-3.3-70b" },
 };
+
+const UPSTREAM_PRIORITY = ["prov-gemini", "prov-groq", "prov-openrouter", "prov-cerebras"];
+
+const MODEL_UPSTREAM: Record<string, string> = {
+  "gemini-flash-latest": "prov-gemini",
+  "gemini-3.6-flash": "prov-gemini",
+  "gemini-pro-latest": "prov-gemini",
+  "gemini-flash-lite-latest": "prov-gemini",
+  "llama-3.3-70b-versatile": "prov-groq",
+  "mixtral-8x7b-32768": "prov-groq",
+  "gemma2-9b-it": "prov-groq",
+  "openai/gpt-4o-mini": "prov-openrouter",
+  "meta-llama/llama-3.3-70b-instruct": "prov-openrouter",
+  "anthropic/claude-3.5-haiku": "prov-openrouter",
+  "llama-3.3-70b": "prov-cerebras",
+  "llama3.1-8b": "prov-cerebras",
+};
+
+function detectKeyUpstream(key: string): string {
+  const k = (key || "").trim();
+  if (/^AIza[0-9A-Za-z\-_]{20,}/.test(k) || /^AQ\.[A-Za-z0-9\-_.]{40,}/.test(k)) return "prov-gemini";
+  if (k.startsWith("gsk_")) return "prov-groq";
+  if (k.startsWith("sk-or-")) return "prov-openrouter";
+  if (k.startsWith("csk-")) return "prov-cerebras";
+  return "unknown";
+}
+
+function upstreamForModel(model: string): string | null {
+  if (MODEL_UPSTREAM[model]) return MODEL_UPSTREAM[model];
+  if (model.startsWith("openai/") || model.startsWith("anthropic/")) return "prov-openrouter";
+  if (model.startsWith("gemini-")) return "prov-gemini";
+  return null;
+}
+
+function orderKeysForUpstream(keys: string[], target: string | null): string[] {
+  if (!target) {
+    const rank = (k: string) => {
+      const u = detectKeyUpstream(k);
+      if (u === "unknown") return 99;
+      const i = UPSTREAM_PRIORITY.indexOf(u);
+      return i === -1 ? 50 : i;
+    };
+    return [...keys].sort((a, b) => rank(a) - rank(b));
+  }
+  const match: string[] = [];
+  const unknown: string[] = [];
+  const rest: string[] = [];
+  keys.forEach((k) => {
+    const u = detectKeyUpstream(k);
+    if (u === target) match.push(k);
+    else if (u === "unknown") unknown.push(k);
+    else rest.push(k);
+  });
+  return [...match, ...unknown, ...rest];
+}
 
 const LEGACY_GEMINI_ALIAS: Record<string, string> = {
   "gemini-2.5-flash": "gemini-flash-latest",
@@ -88,15 +143,11 @@ function collectRelayKeys(req: any, body: any): string[] {
   return [...new Set(out)];
 }
 
-function resolveRelayTarget(body: any): { ok: boolean; providerId: string; providerName: string; baseUrl: string; error?: string } {
-  const providerId: string = body?.providerId || "prov-gemini";
-  const catalog = PROVIDER_CATALOG[providerId];
-  if (catalog) return { ok: true, providerId, providerName: catalog.name, baseUrl: catalog.baseUrl };
+function resolveCustomBase(body: any): { baseUrl: string; error?: string } {
   const custom = typeof body?.baseUrl === "string" ? body.baseUrl.trim() : "";
-  if (!custom || !isAllowedUpstream(custom)) {
-    return { ok: false, providerId, providerName: providerId, baseUrl: "", error: `Unknown providerId '${providerId}'. Use prov-gemini/prov-groq/prov-openrouter/prov-cerebras or a public https baseUrl.` };
-  }
-  return { ok: true, providerId, providerName: providerId, baseUrl: custom };
+  if (!custom) return { baseUrl: "" };
+  if (!isAllowedUpstream(custom)) return { baseUrl: "", error: "baseUrl public https hona chahiye." };
+  return { baseUrl: custom };
 }
 
 async function relayChatCompletion(opts: { baseUrl: string; apiKey: string; model: string; messages: any[]; maxTokens: number; temperature: number }): Promise<{ ok: boolean; status: number; data: any }> {
@@ -124,9 +175,9 @@ async function relayChatCompletion(opts: { baseUrl: string; apiKey: string; mode
   return { ok: resp.ok, status: resp.status, data };
 }
 
-function wantedModelFor(providerId: string, model: any, fallback: string): string {
-  let wanted = (typeof model === "string" && model) || PROVIDER_CATALOG[providerId]?.defaultModel || fallback;
-  if (providerId === "prov-gemini" && LEGACY_GEMINI_ALIAS[wanted]) wanted = LEGACY_GEMINI_ALIAS[wanted];
+function wantedModelUniversal(model: any, fallback: string): string {
+  let wanted = (typeof model === "string" && model) || fallback;
+  if (LEGACY_GEMINI_ALIAS[wanted]) wanted = LEGACY_GEMINI_ALIAS[wanted];
   return wanted;
 }
 
@@ -219,12 +270,27 @@ async function resolveKeyPool(
   if (await isMasterRevokedLocal(payload.mid)) {
     return { keys: [], error: "Ye master key revoke (delete) ho chuki hai — nayi generate karo." };
   }
-  const pool = payload.keys?.[providerId];
-  const arr = Array.isArray(pool) ? pool.map((e: any) => (typeof e === "string" ? e : e?.k)).filter((k: any) => typeof k === "string" && k) : [];
-  if (arr.length === 0) {
-    return { keys: [], error: "Is master key me is provider ki koi key nahi hai." };
+  // Universal: saare pools flatten (universal first, then legacy ids for old masters)
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const take = (arr: any) => {
+    if (!Array.isArray(arr)) return;
+    arr.forEach((e: any) => {
+      const k = typeof e === "string" ? e : e?.k;
+      if (typeof k === "string" && k.trim() && !seen.has(k.trim())) {
+        seen.add(k.trim());
+        out.push(k.trim());
+      }
+    });
+  };
+  const pools = payload.keys || {};
+  take(pools["prov-universal"]);
+  ["prov-gemini", "prov-groq", "prov-openrouter", "prov-cerebras"].forEach((pid) => take(pools[pid]));
+  Object.keys(pools).forEach((pid) => take(pools[pid]));
+  if (out.length === 0) {
+    return { keys: [], error: "Is master key me koi key nahi hai." };
   }
-  return { keys: arr };
+  return { keys: out };
 }
 
 // Helper to initialize GenAI client safely with server secret or user provided key
@@ -355,11 +421,11 @@ RESPONSE STYLE (STRICT — SHORT & PROFESSIONAL):
 3. When the user asks for a command, endpoint URL, key steps or code: give it FIRST in a fenced code block, then max 1-line note. Never bury commands inside paragraphs.
 4. Action receipts: one short line per executed action.
 
-SITE GATEWAY CONTEXT (use when user asks for endpoint/commands/snippets):
+SITE GATEWAY CONTEXT (ONE universal provider — no providerId needed):
 - Public endpoint: {siteBaseUrl}/chat/completions (OpenAI-compatible). siteBaseUrl is given in CURRENT ROUTER STATE below.
-- Auth header: Authorization: Bearer <the user's own key for that provider>.
-- Provider catalog + key availability are in CURRENT ROUTER STATE as providerCatalog lines (id | baseUrl | models | key:yes/no).
-- Fill curl/python/node snippets with THESE exact values in fenced code blocks so the user can 1-click copy.
+- Auth header: Authorization: Bearer <user's UNIQUE master key from Export tab>.
+- Sirf model naam bhejo — server model se upstream auto-route karta hai (gemini-* → Gemini, llama-3.3-70b-versatile → Groq, openai/* → OpenRouter, llama-3.3-70b → Cerebras).
+- Fill curl/python/node snippets with THESE exact values in fenced code blocks so the user can 1-click copy. providerId kabhi mat maango, snippets me mat dalo.
 
 MASTER KEY FLOW (external tools ke liye — endpoint/commands maangne pe):
 - Site endpoint: {siteBaseUrl}/chat/completions (OpenAI-compatible). siteBaseUrl CURRENT ROUTER STATE me hai.
@@ -453,29 +519,37 @@ app.post("/api/copilot/tts", async (req, res) => {
   }
 });
 
-// Tester inference via generic multi-provider relay (per-provider keys, rotation).
+// Tester inference via universal relay (model naam se auto-route, key rotation).
 app.post("/api/router/inference", async (req, res) => {
   const startTime = Date.now();
   try {
     const body = req.body || {};
     const { prompt, model, clientApiKey } = body;
-    const target = resolveRelayTarget(body);
-    if (!target.ok) return res.status(400).json({ error: target.error });
 
     if (!prompt || typeof prompt !== "string") {
       return res.status(400).json({ error: "Missing prompt parameter" });
     }
-    const keys = collectRelayKeys(req, body);
+    const custom = resolveCustomBase(body);
+    if (custom.error) return res.status(400).json({ error: custom.error });
+    const pool = await resolveKeyPool(req, body, "prov-universal");
+    const keys = pool.keys;
     if (keys.length === 0) {
-      return res.status(401).json({ error: `Login required: ${target.providerName} ki key dalo (Provider Keys).` });
+      return res.status(401).json({ error: pool.error || "Login required: KEYS me key dalo." });
     }
 
-    const wanted = wantedModelFor(target.providerId, model, "gemini-flash-latest");
+    const wanted = wantedModelUniversal(model, "gemini-flash-latest");
+    const target = custom.baseUrl ? null : upstreamForModel(wanted);
+    const ordered = custom.baseUrl ? keys : orderKeysForUpstream(keys, target);
+    const retryable = (st: number) =>
+      [401, 403, 429, 500, 502, 503, 504].includes(st) || (!target && !custom.baseUrl && [400, 404].includes(st));
+    const deadKeyPrefixes: string[] = [];
     let lastErr = "unknown error";
-    for (let i = 0; i < keys.length; i++) {
+    for (let i = 0; i < ordered.length; i++) {
+      const upId = custom.baseUrl ? "custom" : detectKeyUpstream(ordered[i]);
+      const up = custom.baseUrl ? { name: "Custom", baseUrl: custom.baseUrl } : UPSTREAMS[upId === "unknown" ? target || "prov-gemini" : upId];
       const r = await relayChatCompletion({
-        baseUrl: target.baseUrl,
-        apiKey: keys[i],
+        baseUrl: up.baseUrl,
+        apiKey: ordered[i],
         model: wanted,
         messages: [{ role: "user", content: prompt }],
         maxTokens: 600,
@@ -485,24 +559,29 @@ app.post("/api/router/inference", async (req, res) => {
         const latencyMs = Date.now() - startTime;
         const text = r.data.choices[0].message?.content || "OK";
         const tokens = r.data.usage?.total_tokens || Math.max(15, Math.ceil(text.length / 4) + Math.ceil(prompt.length / 4));
-        res.setHeader("X-Edge-Provider", target.providerId);
+        const served = custom.baseUrl ? "custom" : upId === "unknown" ? target || "prov-gemini" : upId;
+        res.setHeader("X-Edge-Upstream", served);
         res.setHeader("X-Edge-Key-Index", String(i));
         return res.json({
           status: "ok",
           isLive: true,
           response: text,
           modelUsed: r.data.model || wanted,
-          providerId: target.providerId,
-          providerName: target.providerName,
+          providerId: "prov-universal",
+          providerName: up.name,
+          upstreamId: served,
           keyIndex: i,
+          key_prefix: typeof ordered[i] === "string" ? ordered[i].slice(0, 8) : "",
+          dead_key_prefixes: deadKeyPrefixes,
           latencyMs,
           tokens,
         });
       }
       lastErr = r.data?.error?.message || r.data?.message || `Upstream HTTP ${r.status}`;
-      if (![401, 403, 429, 500, 502, 503, 504].includes(r.status)) break;
+      if (r.status === 401 || r.status === 403) deadKeyPrefixes.push(ordered[i].slice(0, 8));
+      if (!retryable(r.status)) break;
     }
-    return res.status(502).json({ error: `${target.providerName}: ${lastErr} (${keys.length} keys tried)` });
+    return res.status(502).json({ error: `${lastErr} (${ordered.length} keys tried)`, dead_key_prefixes: deadKeyPrefixes });
   } catch (err: any) {
     console.error("Inference route error:", err);
     const latencyMs = Date.now() - startTime;
@@ -513,43 +592,49 @@ app.post("/api/router/inference", async (req, res) => {
   }
 });
 
-// Multi-provider public gateway (OpenAI-compatible) with per-provider key rotation.
+// Universal public gateway (OpenAI-compatible): model naam se auto-route, key rotation.
 app.post("/api/v1/chat/completions", async (req, res) => {
   const startTime = Date.now();
   try {
     const body = req.body || {};
     const { messages = [], model, max_tokens = 800, temperature = 0.7 } = body;
-    const target = resolveRelayTarget(body);
-    if (!target.ok) {
-      return res.status(400).json({ error: { message: target.error, type: "invalid_request_error" } });
-    }
 
     if (!Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: { message: "Invalid messages array", type: "invalid_request_error" } });
     }
 
-    const pool = await resolveKeyPool(req, body, target.providerId);
+    const custom = resolveCustomBase(body);
+    if (custom.error) {
+      return res.status(400).json({ error: { message: custom.error, type: "invalid_request_error" } });
+    }
+    const pool = await resolveKeyPool(req, body, "prov-universal");
     const keys = pool.keys;
     if (keys.length === 0) {
       return res.status(401).json({
         error: {
-          message: pool.error || `Is provider (${target.providerName}) ki key dalo. Login karke Provider Keys me add karo, fir Authorization: Bearer <KEY> bhejo.`,
+          message: pool.error || "API key dalo: KEYS me add karo, fir link + master key (ya direct key) bhejo.",
           type: "authentication_error",
         },
       });
     }
 
-    const wanted = wantedModelFor(target.providerId, model, "gemini-flash-latest");
+    const wanted = wantedModelUniversal(model, "gemini-flash-latest");
+    const target = custom.baseUrl ? null : upstreamForModel(wanted);
+    const ordered = custom.baseUrl ? keys : orderKeysForUpstream(keys, target);
     const openaiMessages = messages.map((m: any) => ({
       role: m.role === "system" || m.role === "assistant" || m.role === "user" ? m.role : "user",
       content: typeof m.content === "string" ? m.content : "",
     }));
+    const retryable = (st: number) =>
+      [401, 403, 429, 500, 502, 503, 504].includes(st) || (!target && !custom.baseUrl && [400, 404].includes(st));
 
     let lastErr = "unknown error";
     const deadKeyIndexes: number[] = [];
     const deadKeyPrefixes: string[] = [];
-    for (let i = 0; i < keys.length; i++) {
-      const r = await relayChatCompletion({ baseUrl: target.baseUrl, apiKey: keys[i], model: wanted, messages: openaiMessages, maxTokens: max_tokens, temperature });
+    for (let i = 0; i < ordered.length; i++) {
+      const upId = custom.baseUrl ? "custom" : detectKeyUpstream(ordered[i]);
+      const up = custom.baseUrl ? { name: "Custom", baseUrl: custom.baseUrl } : UPSTREAMS[upId === "unknown" ? target || "prov-gemini" : upId];
+      const r = await relayChatCompletion({ baseUrl: up.baseUrl, apiKey: ordered[i], model: wanted, messages: openaiMessages, maxTokens: max_tokens, temperature });
       if (r.ok) {
         const latencyMs = Date.now() - startTime;
         const d = r.data || {};
@@ -558,7 +643,8 @@ app.post("/api/v1/chat/completions", async (req, res) => {
         const usage = d.usage || {};
         const promptTokens = usage.prompt_tokens ?? openaiMessages.reduce((acc: number, m: any) => acc + Math.ceil((m.content || "").length / 4), 0);
         const completionTokens = usage.completion_tokens ?? Math.ceil(responseText.length / 4);
-        res.setHeader("X-Edge-Provider", target.providerId);
+        const served = custom.baseUrl ? "custom" : upId === "unknown" ? target || "prov-gemini" : upId;
+        res.setHeader("X-Edge-Upstream", served);
         res.setHeader("X-Edge-Key-Index", String(i));
         res.setHeader("X-Edge-Keys-Tried", String(i + 1));
         res.setHeader("X-Edge-Latency-Ms", latencyMs.toString());
@@ -581,9 +667,11 @@ app.post("/api/v1/chat/completions", async (req, res) => {
             total_tokens: promptTokens + completionTokens,
           },
           edge_routing: {
-            provider: target.providerName,
-            provider_id: target.providerId,
+            provider: up.name,
+            provider_id: served,
+            gateway: "prov-universal",
             key_index: i,
+            key_prefix: typeof ordered[i] === "string" ? ordered[i].slice(0, 8) : "",
             keys_tried: i + 1,
             dead_key_indexes: deadKeyIndexes,
             dead_key_prefixes: deadKeyPrefixes,
@@ -593,18 +681,17 @@ app.post("/api/v1/chat/completions", async (req, res) => {
         });
       }
       lastErr = r.data?.error?.message || r.data?.message || `Upstream HTTP ${r.status}`;
-      if ((r.status === 401 || r.status === 403) && typeof keys[i] === "string") {
+      if ((r.status === 401 || r.status === 403) && typeof ordered[i] === "string") {
         deadKeyIndexes.push(i);
-        deadKeyPrefixes.push(keys[i].slice(0, 8));
+        deadKeyPrefixes.push(ordered[i].slice(0, 8));
       }
-      if (![401, 403, 429, 500, 502, 503, 504].includes(r.status)) break;
+      if (!retryable(r.status)) break;
     }
 
     return res.status(502).json({
       error: {
-        message: `${target.providerName}: ${lastErr} (${keys.length} keys tried)`,
+        message: `${lastErr} (${ordered.length} keys tried)`,
         type: "upstream_error",
-        provider_id: target.providerId,
         dead_key_indexes: deadKeyIndexes,
         dead_key_prefixes: deadKeyPrefixes,
       },

@@ -138,36 +138,19 @@ export class SmartPromptRouter {
       text.includes('architecture') ||
       text.includes('debug');
 
-    if (isCodeOrMath) {
-      const deepseek = providers.find((p) => p.slug === 'deepseek');
-      const gemini = providers.find((p) => p.slug === 'gemini');
-      const oai = providers.find((p) => p.slug === 'openai');
+    const uni = providers[0];
+    const uniSlug = uni?.slug || 'edge-router-universal';
+    const pickModel = (want: string, fallback: string) =>
+      uni && uni.models.includes(want) ? want : uni?.models[0] || fallback;
 
-      if (deepseek) {
-        return {
-          taskType: 'code-reasoning',
-          recommendedProviderSlug: 'deepseek',
-          recommendedModel: deepseek.models[0] || 'deepseek-reasoner-r1',
-          reasoning: 'Detected complex logic/coding requirement. DeepSeek R1 reasoning model provides highest accuracy.',
-          estimatedLatencyMs: 42,
-        };
-      } else if (gemini) {
-        return {
-          taskType: 'code-reasoning',
-          recommendedProviderSlug: 'gemini',
-          recommendedModel: 'gemini-3.1-pro-preview',
-          reasoning: 'Detected complex prompt. Gemini 3.1 Pro preview selected for deep analytical reasoning.',
-          estimatedLatencyMs: 35,
-        };
-      } else if (oai) {
-        return {
-          taskType: 'code-reasoning',
-          recommendedProviderSlug: 'openai',
-          recommendedModel: 'gpt-4o',
-          reasoning: 'Routed to OpenAI GPT-4o for high-precision code synthesis.',
-          estimatedLatencyMs: 38,
-        };
-      }
+    if (isCodeOrMath) {
+      return {
+        taskType: 'code-reasoning',
+        recommendedProviderSlug: uniSlug,
+        recommendedModel: pickModel('gemini-pro-latest', 'gemini-flash-latest'),
+        reasoning: 'Detected complex logic/coding requirement. Reasoning model auto-routed.',
+        estimatedLatencyMs: 35,
+      };
     }
 
     // 2. Short, real-time, ping, latency-sensitive query
@@ -181,47 +164,22 @@ export class SmartPromptRouter {
       text.includes('quick');
 
     if (isUltraFast) {
-      const cerebras = providers.find((p) => p.slug === 'cerebras');
-      const groq = providers.find((p) => p.slug === 'groq');
-
-      if (cerebras) {
-        return {
-          taskType: 'fast-chat',
-          recommendedProviderSlug: 'cerebras',
-          recommendedModel: cerebras.models[0] || 'llama3.1-8b-instant',
-          reasoning: 'Detected real-time / low-latency query. Cerebras CS-3 LPU delivers 10ms sub-millisecond TTFT.',
-          estimatedLatencyMs: 10,
-        };
-      } else if (groq) {
-        return {
-          taskType: 'fast-chat',
-          recommendedProviderSlug: 'groq',
-          recommendedModel: groq.models[0] || 'llama-3.3-70b-versatile',
-          reasoning: 'Detected interactive query. Groq LPU engine selected for ~18ms edge speed.',
-          estimatedLatencyMs: 18,
-        };
-      }
-    }
-
-    // 3. Balanced general request
-    const gemini = providers.find((p) => p.slug === 'gemini');
-    if (gemini) {
       return {
-        taskType: 'general',
-        recommendedProviderSlug: 'gemini',
-        recommendedModel: 'gemini-flash-latest',
-        reasoning: 'Selected Gemini 2.5 Flash for optimum balance of speed, multimodal intelligence, and zero cost.',
-        estimatedLatencyMs: 22,
+        taskType: 'fast-chat',
+        recommendedProviderSlug: uniSlug,
+        recommendedModel: pickModel('llama-3.3-70b-versatile', 'gemini-flash-latest'),
+        reasoning: 'Detected real-time / low-latency query. Fastest route auto-selected.',
+        estimatedLatencyMs: 14,
       };
     }
 
-    // Default to active provider
+    // 3. Balanced general request
     return {
       taskType: 'general',
-      recommendedProviderSlug: providers[0]?.slug || 'groq',
-      recommendedModel: providers[0]?.models[0] || 'default-model',
-      reasoning: 'Selected active primary edge provider.',
-      estimatedLatencyMs: 25,
+      recommendedProviderSlug: uniSlug,
+      recommendedModel: pickModel('gemini-flash-latest', uni?.models[0] || 'gemini-flash-latest'),
+      reasoning: 'Balanced speed + quality route auto-selected.',
+      estimatedLatencyMs: 22,
     };
   }
 }
