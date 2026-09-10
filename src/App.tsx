@@ -26,8 +26,36 @@ import { EdgeRouterEngine } from './services/edgeRouterEngine';
 import { AutonomousWatchdogService } from './services/autonomousWatchdog';
 import { getSessionUsername, setSession, clearSession, syncUserGeminiKey } from './utils/auth';
 
+// Runs ONCE at module load — BEFORE any useState initializer reads localStorage.
+// (Old code ran migration inside a later initializer, so stale provider lists won.)
+function runDataMigrations() {
+  try {
+    if (localStorage.getItem('er_data_version') === 'v4-universal') return;
+    localStorage.removeItem('er_providers');
+    localStorage.removeItem('er_endpoints');
+    localStorage.removeItem('er_active_provider');
+    try {
+      localStorage.setItem('er_fallback_chain', JSON.stringify(INITIAL_FALLBACK_CHAIN));
+    } catch { /* ignore */ }
+    try {
+      const n = migratePoolsToUniversal();
+      if (n > 0) {
+        try {
+          notify('success', `Keys merged: ${n}`, 'Saari purani keys ab 1 universal pool me. Kuch dobara dalne ki zaroorat nahi.');
+        } catch { /* ignore */ }
+      }
+    } catch { /* ignore */ }
+    try {
+      localStorage.setItem('er_data_version', 'v4-universal');
+    } catch { /* ignore */ }
+  } catch { /* ignore */ }
+}
+runDataMigrations();
+
 export default function App() {
   // Persistence in local edge cache with smart migration for new providers
+  // NOTE: data migrations run at module level (runDataMigrations) so they
+  // execute BEFORE any useState initializer reads localStorage.
   const [providers, setProviders] = useState<Provider[]>(() => {
     const saved = localStorage.getItem('er_providers');
     if (!saved) return INITIAL_PROVIDERS;
@@ -171,23 +199,6 @@ export default function App() {
   // Operator Authentication & Autonomous Copilot state (multi-provider, per-user keys, strict gate)
   const [loggedUser, setLoggedUser] = useState<string | null>(() => {
     try {
-      // One-time migration: older data -> ONE universal provider (users + keys preserved + merged)
-      if (localStorage.getItem('er_data_version') !== 'v4-universal') {
-        localStorage.removeItem('er_providers');
-        localStorage.removeItem('er_endpoints');
-        localStorage.removeItem('er_active_provider');
-        localStorage.setItem('er_fallback_chain', JSON.stringify(INITIAL_FALLBACK_CHAIN));
-        localStorage.setItem('er_data_version', 'v4-universal');
-        // Merge saari purani pools (per-provider + legacy singles) into universal pool
-        try {
-          const n = migratePoolsToUniversal();
-          if (n > 0) {
-            try {
-              notify('success', `Keys merged: ${n}`, 'Saari purani keys ab 1 universal pool me. Kuch dobara dalne ki zaroorat nahi.');
-            } catch { /* ignore */ }
-          }
-        } catch { /* ignore */ }
-      }
       return getSessionUsername();
     } catch {
       return null;
