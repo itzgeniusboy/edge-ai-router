@@ -18,7 +18,7 @@ import { ProviderKeysModal } from './components/ProviderKeysModal';
 import { NotificationsBell } from './components/NotificationsBell';
 import { Toasts } from './components/Toasts';
 import { notify, subscribeNotifications, loadNotifications, saveNotifications, type AppNotification } from './utils/notify';
-import { getAllProviderKeys, getProviderKeys, addProviderKey } from './utils/providerKeys';
+import { getAllProviderKeys, getProviderKeys, addProviderKey, migratePoolsToUniversal } from './utils/providerKeys';
 import { AutonomousCopilot } from './components/AutonomousCopilot';
 import { INITIAL_PROVIDERS, INITIAL_ENDPOINTS, INITIAL_FALLBACK_CHAIN, INITIAL_DAILY_USAGES } from './data/initialData';
 import { Provider, Endpoint, RoutingPolicy, RoutingDecision, WatchdogEvent } from './types/router';
@@ -171,21 +171,20 @@ export default function App() {
   // Operator Authentication & Autonomous Copilot state (multi-provider, per-user keys, strict gate)
   const [loggedUser, setLoggedUser] = useState<string | null>(() => {
     try {
-      // One-time migration: v1/v2 data -> multi-provider catalog (users + keys preserved)
-      if (localStorage.getItem('er_data_version') !== 'v3-multi') {
+      // One-time migration: older data -> ONE universal provider (users + keys preserved + merged)
+      if (localStorage.getItem('er_data_version') !== 'v4-universal') {
         localStorage.removeItem('er_providers');
         localStorage.removeItem('er_endpoints');
         localStorage.removeItem('er_active_provider');
         localStorage.setItem('er_fallback_chain', JSON.stringify(INITIAL_FALLBACK_CHAIN));
-        localStorage.setItem('er_data_version', 'v3-multi');
-        // Seed Gemini key pool from the logged-in user's saved key so login keeps working
+        localStorage.setItem('er_data_version', 'v4-universal');
+        // Merge saari purani pools (per-provider + legacy singles) into universal pool
         try {
-          const sess = localStorage.getItem('er_session_user');
-          const users = JSON.parse(localStorage.getItem('er_users') || '[]');
-          const me = users.find((x: any) => x.username === sess);
-          const gk = me?.geminiKey || localStorage.getItem('er_gemini_key') || '';
-          if (gk.trim() && !localStorage.getItem('er_api_keys_prov-gemini')) {
-            localStorage.setItem('er_api_keys_prov-gemini', JSON.stringify([gk.trim()]));
+          const n = migratePoolsToUniversal();
+          if (n > 0) {
+            try {
+              notify('success', `Keys merged: ${n}`, 'Saari purani keys ab 1 universal pool me. Kuch dobara dalne ki zaroorat nahi.');
+            } catch { /* ignore */ }
           }
         } catch { /* ignore */ }
       }
@@ -538,17 +537,24 @@ export default function App() {
   };
 
   const handleSetApiKey = (providerId: string, apiKey: string) => {
-    localStorage.setItem(`er_api_key_${providerId}`, apiKey);
+    // Copilot SET_API_KEY actions -> universal pool (dedup inside) + legacy slots for compat
+    try {
+      addProviderKey('prov-universal', apiKey);
+    } catch { /* ignore */ }
+    try {
+      localStorage.setItem(`er_api_key_${providerId}`, apiKey);
+    } catch { /* ignore */ }
     setEndpoints((prev) =>
       prev.map((ep) => (ep.providerId === providerId ? { ...ep, apiKey } : ep))
     );
-    if (providerId === 'prov-gemini') {
+    if (providerId === 'prov-gemini' || providerId === 'prov-universal') {
       setUserGeminiKey(apiKey);
       try {
         localStorage.setItem('er_gemini_key', apiKey);
         if (loggedUser) syncUserGeminiKey(loggedUser, apiKey);
       } catch { /* ignore */ }
     }
+    notify('success', 'API key saved', 'Universal pool me add ho gayi.');
   };
 
   const handleRunEdgeTest = (promptText?: string) => {

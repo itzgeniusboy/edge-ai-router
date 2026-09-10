@@ -677,17 +677,17 @@ function selectEndpoint(nodes: RegionalEndpoint[]): RegionalEndpoint {
               {
                 id: 'gemini-flash-latest',
                 title: 'gemini-flash-latest',
-                desc: 'Fast default, always current',
+                desc: 'Fast default (Gemini auto-route)',
               },
               {
-                id: 'gemini-3.6-flash',
-                title: 'gemini-3.6-flash',
-                desc: 'Latest generation quality',
+                id: 'llama-3.3-70b-versatile',
+                title: 'llama-3.3-70b-versatile',
+                desc: 'Ultra-fast (Groq auto-route)',
               },
               {
-                id: 'gemini-pro-latest',
-                title: 'gemini-pro-latest',
-                desc: 'Smartest reasoning',
+                id: 'openai/gpt-4o-mini',
+                title: 'openai/gpt-4o-mini',
+                desc: 'Via OpenRouter auto-route',
               },
             ].map((preset) => (
               <button

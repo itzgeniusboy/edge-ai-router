@@ -19,40 +19,41 @@ hai `/usr/bin/env` missing ki wajah se — `node ./node_modules/...` full path u
 GitHub push → Vercel auto-deploy. Koi env/DB setup nahi chahiye.
 `vercel.json` me `/api/*` serverless functions + baaki static SPA hai.
 
-## Providers + Keys (unlimited keys per provider)
+## ONE universal provider (koi providerId nahi)
 
-Catalog (OpenAI-compatible):
+**Ek hi provider: Edge Router (`prov-universal`)** — saare models, saari keys, auto-route.
+Sirf **model naam** bhejo, server khud sahi upstream pakadta hai:
 
-| Provider | Base URL | Key kaha se |
-|---|---|---|
-| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` | aistudio.google.com → Get API Key |
-| Groq | `https://api.groq.com/openai/v1` | console.groq.com → API Keys |
-| OpenRouter | `https://openrouter.ai/api/v1` | openrouter.ai → Keys |
-| Cerebras | `https://api.cerebras.ai/v1` | cloud.cerebras.ai → API Keys |
+| Model example | Jaata hai |
+|---|---|
+| `gemini-flash-latest`, `gemini-3.6-flash` | Google Gemini (key: `AIza...`/`AQ...` — aistudio.google.com) |
+| `llama-3.3-70b-versatile`, `mixtral-8x7b-32768` | Groq (key: `gsk_...` — console.groq.com) |
+| `openai/gpt-4o-mini`, `anthropic/...` | OpenRouter (key: `sk-or-...` — openrouter.ai) |
+| `llama-3.3-70b`, `llama3.1-8b` | Cerebras (key: `csk-...` — cloud.cerebras.ai) |
 
-Site me **KEYS** button → har provider me unlimited keys add karo.
+Site me **KEYS** button → ek hi list me unlimited keys dalo (prefix se auto-badge + Gmail tag).
 429/quota/auth-fail pe automatic next key try hoti hai (rotation).
-Custom provider: `baseUrl` public `https` hona chahiye (private/loopback/link-local block hai — SSRF guard).
+401/403 wali key auto-quarantine (Gmail tag notice samet).
+Custom `baseUrl` public `https` hona chahiye (private/loopback/link-local block — SSRF guard).
 
 ## Single public endpoint
 
 ```
 POST {site}/api/v1/chat/completions
-Authorization: Bearer <us-provider-ki-key>
+Authorization: Bearer <master-key-ya-direct-key>
 Content-Type: application/json
 
 {
-  "providerId": "prov-gemini | prov-groq | prov-openrouter | prov-cerebras",
-  "model": "gemini-flash-latest (default) ya provider-native model",
+  "model": "llama-3.3-70b-versatile",
   "messages": [{ "role": "user", "content": "hi" }],
   "max_tokens": 800,
-  "temperature": 0.7,
-  "apiKeys": ["<key1>", "<key2>"]   // optional: rotation pool
+  "temperature": 0.7
 }
 ```
 
-Response OpenAI-shape + `edge_routing` + headers
-(`X-Edge-Provider`, `X-Edge-Key-Index`, `X-Edge-Latency-Ms`).
+`providerId` dene ki zaroorat nahi (purani IDs silent accept — kuch tootega nahi).
+Response OpenAI-shape + `edge_routing` (serving upstream + `key_prefix`) + headers
+(`X-Edge-Upstream`, `X-Edge-Key-Index`, `X-Edge-Latency-Ms`).
 
 Baaki routes: `GET /api/health`, `GET /api/ping`,
 `POST /api/copilot/chat`, `POST /api/copilot/tts`,
@@ -60,8 +61,8 @@ Baaki routes: `GET /api/health`, `GET /api/ping`,
 
 ## Unique master key (link + 1 key = sab providers)
 
-Export tab → **Generate** dabao: tumhare saare provider pools ek encrypted
-`er1...` master key me lock ho jayenge (90 din valid, per-provider max 20 keys).
+Export tab → **Generate** dabao: tumhari saari keys ek encrypted
+`er1...` master key me lock ho jayengi (90 din valid, max 80 keys).
 Bahar ke tools me **site link + master key** dalo — background me pools se relay hoga.
 Raw provider keys kabhi share mat karo.
 
