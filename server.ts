@@ -284,7 +284,7 @@ async function resolveKeyPool(
     });
   };
   const pools = payload.keys || {};
-  take(pools["prov-universal"]);
+  take(pools["Edge Router"]);
   ["prov-gemini", "prov-groq", "prov-openrouter", "prov-cerebras"].forEach((pid) => take(pools[pid]));
   Object.keys(pools).forEach((pid) => take(pools[pid]));
   if (out.length === 0) {
@@ -360,7 +360,7 @@ app.get("/api/v1/models", (req, res) => {
       created: now,
       owned_by: "edge-router",
       upstream: m.upstream,
-      gateway: "prov-universal",
+      gateway: "Edge Router",
       ...(ups ? { available: ups.has(m.upstream) } : {}),
     })),
   });
@@ -471,8 +471,8 @@ RESPONSE STYLE (STRICT — SHORT & PROFESSIONAL):
 3. When the user asks for a command, endpoint URL, key steps or code: give it FIRST in a fenced code block, then max 1-line note. Never bury commands inside paragraphs.
 4. Action receipts: one short line per executed action.
 
-SITE GATEWAY CONTEXT (ONE universal provider — official ID: prov-universal):
-- Jaha bhi provider ID dalni pade, waha "prov-universal" dalo. Model naam se auto-route hota hai, ID optional hai.
+SITE GATEWAY CONTEXT (ONE universal provider — official ID: Edge Router):
+- Jaha bhi provider ID dalni pade, waha "Edge Router" dalo. Model naam se auto-route hota hai, ID optional hai.
 - Public endpoint: {siteBaseUrl}/chat/completions (OpenAI-compatible). siteBaseUrl is given in CURRENT ROUTER STATE below.
 - Auth header: Authorization: Bearer <user's UNIQUE master key from Export tab>.
 - Sirf model naam bhejo — server model se upstream auto-route karta hai (gemini-* → Gemini, llama-3.3-70b-versatile → Groq, openai/* → OpenRouter, llama-3.3-70b → Cerebras).
@@ -582,7 +582,7 @@ app.post("/api/router/inference", async (req, res) => {
     }
     const custom = resolveCustomBase(body);
     if (custom.error) return res.status(400).json({ error: custom.error });
-    const pool = await resolveKeyPool(req, body, "prov-universal");
+    const pool = await resolveKeyPool(req, body, "Edge Router");
     const keys = pool.keys;
     if (keys.length === 0) {
       return res.status(401).json({ error: pool.error || "Login required: KEYS me key dalo." });
@@ -611,7 +611,7 @@ app.post("/api/router/inference", async (req, res) => {
         const text = r.data.choices[0].message?.content || "OK";
         const tokens = r.data.usage?.total_tokens || Math.max(15, Math.ceil(text.length / 4) + Math.ceil(prompt.length / 4));
         const served = custom.baseUrl ? "custom" : upId === "unknown" ? target || "prov-gemini" : upId;
-        res.setHeader("X-Edge-Provider", "prov-universal");
+        res.setHeader("X-Edge-Provider", "Edge Router");
         res.setHeader("X-Edge-Upstream", served);
         res.setHeader("X-Edge-Key-Index", String(i));
         return res.json({
@@ -619,7 +619,7 @@ app.post("/api/router/inference", async (req, res) => {
           isLive: true,
           response: text,
           modelUsed: r.data.model || wanted,
-          providerId: "prov-universal",
+          providerId: "Edge Router",
           providerName: up.name,
           upstreamId: served,
           keyIndex: i,
@@ -659,7 +659,7 @@ app.post("/api/v1/chat/completions", async (req, res) => {
     if (custom.error) {
       return res.status(400).json({ error: { message: custom.error, type: "invalid_request_error" } });
     }
-    const pool = await resolveKeyPool(req, body, "prov-universal");
+    const pool = await resolveKeyPool(req, body, "Edge Router");
     const keys = pool.keys;
     if (keys.length === 0) {
       return res.status(401).json({
@@ -696,7 +696,7 @@ app.post("/api/v1/chat/completions", async (req, res) => {
         const promptTokens = usage.prompt_tokens ?? openaiMessages.reduce((acc: number, m: any) => acc + Math.ceil((m.content || "").length / 4), 0);
         const completionTokens = usage.completion_tokens ?? Math.ceil(responseText.length / 4);
         const served = custom.baseUrl ? "custom" : upId === "unknown" ? target || "prov-gemini" : upId;
-        res.setHeader("X-Edge-Provider", "prov-universal");
+        res.setHeader("X-Edge-Provider", "Edge Router");
         res.setHeader("X-Edge-Upstream", served);
         res.setHeader("X-Edge-Key-Index", String(i));
         res.setHeader("X-Edge-Keys-Tried", String(i + 1));
@@ -722,7 +722,7 @@ app.post("/api/v1/chat/completions", async (req, res) => {
           edge_routing: {
             provider: up.name,
             // Canonical site provider ID — jaha ID dalni ho, yahi dalo:
-            provider_id: "prov-universal",
+            provider_id: "Edge Router",
             upstream_id: served,
             key_index: i,
             key_prefix: typeof ordered[i] === "string" ? ordered[i].slice(0, 8) : "",

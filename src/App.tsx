@@ -31,7 +31,7 @@ import { getSessionUsername, setSession, clearSession, syncUserGeminiKey } from 
 // (Old code ran migration inside a later initializer, so stale provider lists won.)
 function runDataMigrations() {
   try {
-    if (localStorage.getItem('er_data_version') === 'v4-universal') return;
+    if (localStorage.getItem('er_data_version') === 'v5-edgerouter') return;
     localStorage.removeItem('er_providers');
     localStorage.removeItem('er_endpoints');
     localStorage.removeItem('er_active_provider');
@@ -42,12 +42,12 @@ function runDataMigrations() {
       const n = migratePoolsToUniversal();
       if (n > 0) {
         try {
-          notify('success', `Keys merged: ${n}`, 'Saari purani keys ab 1 universal pool me. Kuch dobara dalne ki zaroorat nahi.');
+          notify('success', `Keys merged: ${n}`, 'Saari purani keys ab Edge Router pool me. Kuch dobara dalne ki zaroorat nahi.');
         } catch { /* ignore */ }
       }
     } catch { /* ignore */ }
     try {
-      localStorage.setItem('er_data_version', 'v4-universal');
+      localStorage.setItem('er_data_version', 'v5-edgerouter');
     } catch { /* ignore */ }
   } catch { /* ignore */ }
 }
@@ -302,7 +302,7 @@ export default function App() {
     try {
       setSession(username);
       localStorage.setItem('er_gemini_key', key);
-      addProviderKey('prov-gemini', key);
+      addProviderKey('Edge Router', key);
     } catch { /* ignore */ }
     setIsLoginOpen(false);
     notify('success', `Welcome, ${username}`, 'Login ho gaya. KEYS button se har provider ki keys add karo.');
@@ -325,7 +325,7 @@ export default function App() {
     setLoggedUser(username);
     setOperatorUsername(username);
     setUserGeminiKey(key);
-    try { addProviderKey('prov-gemini', key); } catch { /* ignore */ }
+    try { addProviderKey('Edge Router', key); } catch { /* ignore */ }
     notify('success', 'Profile updated', `${username} ka account save ho gaya.`);
   };
 
@@ -569,7 +569,7 @@ export default function App() {
   const handleSetApiKey = (providerId: string, apiKey: string) => {
     // Copilot SET_API_KEY actions -> universal pool (dedup inside) + legacy slots for compat
     try {
-      addProviderKey('prov-universal', apiKey);
+      addProviderKey('Edge Router', apiKey);
     } catch { /* ignore */ }
     try {
       localStorage.setItem(`er_api_key_${providerId}`, apiKey);
@@ -577,7 +577,7 @@ export default function App() {
     setEndpoints((prev) =>
       prev.map((ep) => (ep.providerId === providerId ? { ...ep, apiKey } : ep))
     );
-    if (providerId === 'prov-gemini' || providerId === 'prov-universal') {
+    if (providerId === 'prov-gemini' || providerId === 'Edge Router') {
       setUserGeminiKey(apiKey);
       try {
         localStorage.setItem('er_gemini_key', apiKey);
@@ -826,7 +826,7 @@ export default function App() {
         onChanged={() => {
           // Keep Export tab key fresh with Gemini pool head
           try {
-            const head = getProviderKeys('prov-gemini')[0];
+            const head = getProviderKeys('Edge Router')[0];
             if (head) setUserGeminiKey(head);
           } catch { /* ignore */ }
         }}

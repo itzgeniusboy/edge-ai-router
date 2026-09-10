@@ -12,10 +12,11 @@ export interface KeyEntry {
 
 export const MAX_KEYS_PER_PROVIDER = 20;
 
-export const UNIVERSAL_PROVIDER_ID = "prov-universal";
+export const UNIVERSAL_PROVIDER_ID = "Edge Router";
 
 // Legacy provider IDs (purane pools/chains se) — sab universal me merge hote hai.
 export const LEGACY_POOL_IDS: string[] = [
+  "prov-universal",
   "prov-gemini",
   "prov-groq",
   "prov-openrouter",

@@ -19,12 +19,14 @@ hai `/usr/bin/env` missing ki wajah se — `node ./node_modules/...` full path u
 GitHub push → Vercel auto-deploy. Koi env/DB setup nahi chahiye.
 `vercel.json` me `/api/*` serverless functions + baaki static SPA hai.
 
-## ONE universal provider — official ID: `prov-universal`
+## ONE universal provider — official ID: `Edge Router`
 
 Jaha bhi provider ID dalni pade (request body, client config, Copilot actions),
-waha `prov-universal` dalo. Model naam se auto-route hota hai, ID dena optional hai.
+waha `Edge Router` dalo. Model naam se auto-route hota hai, ID dena optional hai.
+(Purani IDs `prov-universal` / `prov-gemini` / `prov-groq` / `prov-openrouter` /
+`prov-cerebras` bhi silent accept hoti hai — kuch tootega nahi.)
 
-**Ek hi provider: Edge Router (`prov-universal`)** — saare models, saari keys, auto-route.
+**Ek hi provider: Edge Router** — saare models, saari keys, auto-route.
 Sirf **model naam** bhejo, server khud sahi upstream pakadta hai:
 
 | Model example | Jaata hai |
