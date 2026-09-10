@@ -21,7 +21,9 @@ import { SmartPromptRouter, PromptAnalysis } from '../services/autonomousWatchdo
 import { SkeletonLoader } from './SkeletonLoader';
 import { getActiveGeminiKey } from '../utils/auth';
 import { getAllProviderKeys, markDeadByPrefixes, reviveProviderKey } from '../utils/providerKeys';
-import { modelsWithKeyStatus } from '../utils/upstream';
+import { modelsWithKeyStatus, upstreamForModel, UPSTREAM_META } from '../utils/upstream';
+import { detectKeyUpstream } from '../utils/providerKeys';
+import { loadLiveCatalog, getModelStatus, markModelOk, markModelFailed, isModelGoneError, runCatalogSync } from '../utils/catalog';
 import { notify } from '../utils/notify';
 
 interface EdgeTesterProps {
@@ -55,6 +57,11 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
   const [lastResult, setLastResult] = useState<RoutingDecision | null>(null);
   const [copied, setCopied] = useState(false);
   const [testerError, setTesterError] = useState('');
+  const [modelFilter, setModelFilter] = useState<'active' | 'all'>('active');
+  const [modelSearch, setModelSearch] = useState('');
+  const [syncing, setSyncing] = useState(false);
+  const [catalogTick, setCatalogTick] = useState(0);
+  const [lastSync, setLastSync] = useState<number>(() => loadLiveCatalog()?.syncedAt || 0);
 
   // Sync selectedModel if activeProvider changes
   React.useEffect(() => {
@@ -142,6 +149,7 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
             decision.latencyMs = hdr ? Number(hdr) : Date.now() - t0;
             decision.tokensUsed = data.usage?.total_tokens || decision.tokensUsed;
             decision.isLive = true;
+            markModelOk(selectedModel);
             // Prefer key_prefix match (order-proof), fallback to key_index
             const kp = data.edge_routing?.key_prefix;
             let ki = typeof data.edge_routing?.key_index === 'number' ? data.edge_routing.key_index : -1;
@@ -167,13 +175,26 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
             const data = await res.json().catch(() => null);
             markProviderKeysExhausted(decision.providerId, Math.max(1, pool.length));
             reportDead(data?.error?.dead_key_prefixes || data?.edge_routing?.dead_key_prefixes);
-            decision.responsePayload = data?.error?.message || `Upstream busy (${res.status}). 60s cooldown lagaya.`;
+            const emsg = data?.error?.message || `Upstream busy (${res.status}). 60s cooldown lagaya.`;
+            decision.responsePayload = emsg;
             decision.isLive = false;
-            notify('error', `Quota/busy: ${decision.providerName}`, 'Keys 60s cooldown pe. Fallback ya nayi key lagao.');
+            if (isModelGoneError(emsg)) {
+              markModelFailed(selectedModel);
+              setCatalogTick((t) => t + 1);
+              notify('warn', `Model hata: ${selectedModel}`, 'Provider pe ye model nahi raha — list se auto-hide. Sync se wapas aayega.');
+            } else {
+              notify('error', `Quota/busy: ${decision.providerName}`, 'Keys 60s cooldown pe. Fallback ya nayi key lagao.');
+            }
           } else {
             const data = await res.json().catch(() => null);
-            decision.responsePayload = data?.error?.message || `Request fail (${res.status}).`;
+            const emsg = data?.error?.message || `Request fail (${res.status}).`;
+            decision.responsePayload = emsg;
             decision.isLive = false;
+            if (isModelGoneError(emsg)) {
+              markModelFailed(selectedModel);
+              setCatalogTick((t) => t + 1);
+              notify('warn', `Model hata: ${selectedModel}`, 'Provider pe ye model nahi raha.');
+            }
           }
         } catch (netErr) {
           console.warn('Live inference call warning:', netErr);
@@ -248,7 +269,7 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
               </div>
             </div>
 
-            {/* Model Selector — green dot = is upstream ki key pool me hai */}
+            {/* Model Selector — LIVE catalog: sirf working models (green dot = key ready) */}
             <div className="space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <label className="block text-xs font-mono uppercase tracking-wider text-neutral-300">
@@ -258,32 +279,159 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
                   Provider: <strong className="text-emerald-400">{activeProvider.name}</strong>
                 </span>
               </div>
-              <div className="flex flex-wrap gap-1.5 font-mono text-xs">
-                {modelsWithKeyStatus(
-                  activeProvider.models,
-                  getAllProviderKeys((providers || []).map((p) => p.id))
-                ).map(({ model: m, upstreamName, hasKey }) => (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <div className="flex border border-neutral-800 text-[10px] font-mono">
+                  {(['active', 'all'] as const).map((f) => (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => setModelFilter(f)}
+                      className={`px-2 py-1 uppercase tracking-wider ${modelFilter === f ? 'bg-neutral-100 text-neutral-950 font-bold' : 'text-neutral-400 hover:text-white'}`}
+                    >
+                      {f === 'active' ? 'Active' : 'All'}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="text"
+                  value={modelSearch}
+                  onChange={(e) => setModelSearch(e.target.value)}
+                  placeholder="Search models..."
+                  className="flex-1 min-w-[120px] bg-neutral-950 border border-neutral-800 px-2 py-1 text-[11px] font-mono text-neutral-200 placeholder-neutral-600 focus:border-emerald-500 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  disabled={syncing}
+                  onClick={async () => {
+                    setSyncing(true);
+                    try {
+                      const fresh = await runCatalogSync((providers || []).map((p) => p.id));
+                      if (fresh) setLastSync(fresh.syncedAt);
+                      setCatalogTick((t) => t + 1);
+                    } finally {
+                      setSyncing(false);
+                    }
+                  }}
+                  title="Providers se fresh model list kheecho"
+                  className="px-2 py-1 text-[10px] font-mono uppercase tracking-wider bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-200 disabled:opacity-50"
+                >
+                  {syncing ? 'SYNCING...' : 'SYNC'}
+                </button>
+                {lastSync > 0 && (
+                  <span className="text-[9px] font-mono text-neutral-500">
+                    synced {new Date(lastSync).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                )}
+              </div>
+              {(() => {
+                void catalogTick;
+                const live = loadLiveCatalog();
+                const pools = getAllProviderKeys((providers || []).map((p) => p.id));
+                const allPoolKeys: string[] = [];
+                Object.values(pools).forEach((arr) => {
+                  if (Array.isArray(arr)) allPoolKeys.push(...arr);
+                });
+                const hasKeyFor = (up: string | null) => {
+                  if (!up) return allPoolKeys.length > 0;
+                  return allPoolKeys.some((k) => detectKeyUpstream(k) === up);
+                };
+                const failedMap = getModelStatus();
+                type Row = { id: string; up: string | null; upName: string; hasKey: boolean; failed: boolean };
+                let rows: Row[];
+                if (live && live.models.length > 0) {
+                  const seen = new Set<string>();
+                  rows = [];
+                  live.models.forEach((m) => {
+                    if (seen.has(m.id)) return;
+                    seen.add(m.id);
+                    rows.push({
+                      id: m.id,
+                      up: m.upstream || upstreamForModel(m.id),
+                      upName: UPSTREAM_META[m.upstream]?.short || UPSTREAM_META[upstreamForModel(m.id) || '']?.short || 'Auto',
+                      hasKey: false,
+                      failed: failedMap[m.id]?.state === 'failed',
+                    });
+                  });
+                  rows.forEach((r) => {
+                    r.hasKey = hasKeyFor(r.up);
+                  });
+                } else {
+                  rows = modelsWithKeyStatus(activeProvider.models, pools).map((s) => ({
+                    id: s.model,
+                    up: upstreamForModel(s.model),
+                    upName: s.upstreamName,
+                    hasKey: s.hasKey,
+                    failed: failedMap[s.model]?.state === 'failed',
+                  }));
+                }
+                const q = modelSearch.trim().toLowerCase();
+                const shown = rows.filter((r) => {
+                  if (modelFilter === 'active' && (!r.hasKey || r.failed)) return false;
+                  if (!q) return true;
+                  return r.id.toLowerCase().includes(q) || r.upName.toLowerCase().includes(q);
+                });
+                const retired = modelFilter === 'all' ? rows.filter((r) => r.failed && (!q || r.id.toLowerCase().includes(q))) : [];
+                const groups: { up: string; name: string; items: Row[] }[] = [];
+                shown.filter((r) => !r.failed).forEach((r) => {
+                  let g = groups.find((x) => x.up === (r.up || 'auto'));
+                  if (!g) {
+                    g = { up: r.up || 'auto', name: r.upName, items: [] as Row[] };
+                    groups.push(g);
+                  }
+                  g.items.push(r);
+                });
+                const btn = (r: Row, dimmed: boolean) => (
                   <button
-                    key={m}
+                    key={r.id}
                     type="button"
-                    onClick={() => setSelectedModel(m)}
-                    title={hasKey ? `${m} → ${upstreamName} (key ready)` : `${m} → ${upstreamName} (KEY NAHI HAI — pehle KEYS me dalo)`}
+                    onClick={() => setSelectedModel(r.id)}
+                    title={r.failed ? `${r.id} — provider pe nahi raha (retired)` : r.hasKey ? `${r.id} → ${r.upName} (key ready)` : `${r.id} → ${r.upName} (KEY NAHI HAI — pehle KEYS me dalo)`}
                     className={`px-2.5 py-1 text-xs border transition-all duration-150 flex items-center gap-1.5 ${
-                      selectedModel === m
+                      selectedModel === r.id
                         ? 'border-neutral-200 bg-white text-neutral-950 font-bold'
-                        : hasKey
+                        : r.hasKey && !dimmed
                           ? 'border-neutral-700 bg-neutral-950 text-neutral-200 hover:text-white'
                           : 'border-neutral-800 bg-neutral-950/40 text-neutral-500 hover:text-neutral-300'
                     }`}
                   >
                     <span
-                      className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${hasKey ? 'bg-emerald-400' : 'bg-neutral-700'}`}
+                      className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${r.hasKey && !dimmed ? 'bg-emerald-400' : r.failed ? 'bg-rose-500' : 'bg-neutral-700'}`}
                     />
-                    <span>{m}</span>
-                    <span className="text-[9px] opacity-70">{upstreamName}</span>
+                    <span className="break-all text-left">{r.id}</span>
                   </button>
-                ))}
-              </div>
+                );
+                return (
+                  <div className="space-y-2.5">
+                    {shown.filter((r) => !r.failed).length === 0 && (
+                      <div className="p-2.5 bg-neutral-950 border border-neutral-800 text-[11px] font-sans text-neutral-400">
+                        {modelFilter === 'active'
+                          ? 'Koi active model nahi — KEYS me key dalo ya SYNC dabao.'
+                          : 'Koi model nahi mila — search badlo ya SYNC dabao.'}
+                      </div>
+                    )}
+                    {groups.map((g) => (
+                      <div key={g.up} className="space-y-1">
+                        <div className="text-[10px] font-mono uppercase tracking-wider text-neutral-500">
+                          {g.name} <span className="text-neutral-600">({g.items.length})</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 font-mono text-xs">
+                          {g.items.map((r) => btn(r, false))}
+                        </div>
+                      </div>
+                    ))}
+                    {retired.length > 0 && (
+                      <div className="space-y-1 pt-1 border-t border-neutral-800">
+                        <div className="text-[10px] font-mono uppercase tracking-wider text-rose-400/80">
+                          Retired ({retired.length}) — provider ne hataya
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 font-mono text-xs">
+                          {retired.map((r) => btn(r, true))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Client Origin Region */}

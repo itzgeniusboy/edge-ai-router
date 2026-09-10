@@ -27,6 +27,7 @@ import { Provider, Endpoint, RoutingPolicy } from '../types/router';
 import { CopyButton } from './CopyButton';
 import { stripActionTags, splitCodeSegments, findUrls } from '../utils/copy';
 import { getProviderKeys, getAllProviderKeys } from '../utils/providerKeys';
+import { loadLiveCatalog, getModelStatus } from '../utils/catalog';
 import { notify } from '../utils/notify';
 
 interface Message {
@@ -546,6 +547,18 @@ Short me jawab dunga — detail chahiye to bol dena. Hindi/Hinglish/English sab 
                     return false;
                   }),
                 }));
+              } catch {
+                return [];
+              }
+            })(),
+            activeModels: (() => {
+              try {
+                const live = loadLiveCatalog();
+                const source: string[] = live && live.models.length > 0
+                  ? [...new Set(live.models.map((m) => m.id))]
+                  : (providers || []).flatMap((p) => p.models || []);
+                const failed = getModelStatus();
+                return source.filter((id) => failed[id]?.state !== "failed").slice(0, 40);
               } catch {
                 return [];
               }

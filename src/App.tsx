@@ -19,6 +19,7 @@ import { NotificationsBell } from './components/NotificationsBell';
 import { Toasts } from './components/Toasts';
 import { notify, subscribeNotifications, loadNotifications, saveNotifications, type AppNotification } from './utils/notify';
 import { getAllProviderKeys, getProviderKeys, addProviderKey, migratePoolsToUniversal } from './utils/providerKeys';
+import { runCatalogSync, CATALOG_INTERVAL_MS } from './utils/catalog';
 import { AutonomousCopilot } from './components/AutonomousCopilot';
 import { INITIAL_PROVIDERS, INITIAL_ENDPOINTS, INITIAL_FALLBACK_CHAIN, INITIAL_DAILY_USAGES } from './data/initialData';
 import { Provider, Endpoint, RoutingPolicy, RoutingDecision, WatchdogEvent } from './types/router';
@@ -409,6 +410,24 @@ export default function App() {
 
     return () => clearInterval(interval);
   }, [isWatchdogActive, providers, endpoints, activeProvider, activeProviderId, fallbackChain, dailyUsages, routingPolicy]);
+
+  // Live catalog auto-sync: login pe + har 6h (manual SYNC Tester me bhi hai)
+  useEffect(() => {
+    if (!loggedUser) return;
+    let cancelled = false;
+    const doSync = () => {
+      runCatalogSync((providers || []).map((p) => p.id)).catch(() => {});
+    };
+    if (!cancelled) doSync();
+    const interval = setInterval(() => {
+      if (!cancelled) doSync();
+    }, CATALOG_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loggedUser]);
 
   const handleTriggerWatchdogAudit = () => {
     const healResult = AutonomousWatchdogService.runHealthCheckAndHeal({
