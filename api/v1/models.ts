@@ -9,9 +9,9 @@ const UNIVERSAL_MODELS: { id: string; upstream: string }[] = [
   { id: "llama-3.3-70b-versatile", upstream: "prov-groq" },
   { id: "mixtral-8x7b-32768", upstream: "prov-groq" },
   { id: "gemma2-9b-it", upstream: "prov-groq" },
-  { id: "openai/gpt-4o-mini", upstream: "prov-openrouter" },
-  { id: "meta-llama/llama-3.3-70b-instruct", upstream: "prov-openrouter" },
-  { id: "anthropic/claude-3.5-haiku", upstream: "prov-openrouter" },
+  { id: "google/gemma-4-31b-it:free", upstream: "prov-openrouter" },
+  { id: "nex-agi/nex-n2.5-mini:free", upstream: "prov-openrouter" },
+  { id: "liquid/lfm-2.5-2.6b:free", upstream: "prov-openrouter" },
   { id: "llama-3.3-70b", upstream: "prov-cerebras" },
   { id: "llama3.1-8b", upstream: "prov-cerebras" },
 ];

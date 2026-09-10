@@ -95,7 +95,7 @@ export const ProviderModal: React.FC<ProviderModalProps> = ({
                 slug: 'novita',
                 category: 'LLM & Multimodal' as const,
                 baseUrl: 'https://api.novita.ai/v3/openai',
-                models: 'meta-llama/llama-3.3-70b-instruct, deepseek/deepseek-r1',
+                models: 'nex-agi/nex-n2.5-mini:free, deepseek/deepseek-r1',
                 quota: 'Fast Inference • Free Credits',
               },
               {

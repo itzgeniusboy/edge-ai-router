@@ -57,7 +57,13 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
   const [lastResult, setLastResult] = useState<RoutingDecision | null>(null);
   const [copied, setCopied] = useState(false);
   const [testerError, setTesterError] = useState('');
-  const [modelFilter, setModelFilter] = useState<'active' | 'all'>('active');
+  const [modelFilter, setModelFilter] = useState<'active' | 'all'>(() => {
+    try {
+      return localStorage.getItem('er_model_filter') === 'all' ? 'all' : 'active';
+    } catch {
+      return 'active';
+    }
+  });
   const [modelSearch, setModelSearch] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [catalogTick, setCatalogTick] = useState(0);
@@ -285,7 +291,12 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
                     <button
                       key={f}
                       type="button"
-                      onClick={() => setModelFilter(f)}
+                      onClick={() => {
+                        setModelFilter(f);
+                        try {
+                          localStorage.setItem('er_model_filter', f);
+                        } catch { /* ignore */ }
+                      }}
                       className={`px-2 py-1 uppercase tracking-wider ${modelFilter === f ? 'bg-neutral-100 text-neutral-950 font-bold' : 'text-neutral-400 hover:text-white'}`}
                     >
                       {f === 'active' ? 'Active' : 'All'}
@@ -336,7 +347,7 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
                   return allPoolKeys.some((k) => detectKeyUpstream(k) === up);
                 };
                 const failedMap = getModelStatus();
-                type Row = { id: string; up: string | null; upName: string; hasKey: boolean; failed: boolean };
+                type Row = { id: string; up: string | null; upName: string; hasKey: boolean; failed: boolean; free: boolean };
                 let rows: Row[];
                 if (live && live.models.length > 0) {
                   const seen = new Set<string>();
@@ -350,6 +361,7 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
                       upName: UPSTREAM_META[m.upstream]?.short || UPSTREAM_META[upstreamForModel(m.id) || '']?.short || 'Auto',
                       hasKey: false,
                       failed: failedMap[m.id]?.state === 'failed',
+                      free: m.free !== false,
                     });
                   });
                   rows.forEach((r) => {
@@ -362,6 +374,7 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
                     upName: s.upstreamName,
                     hasKey: s.hasKey,
                     failed: failedMap[s.model]?.state === 'failed',
+                    free: true,
                   }));
                 }
                 const q = modelSearch.trim().toLowerCase();
@@ -398,6 +411,11 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
                       className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${r.hasKey && !dimmed ? 'bg-emerald-400' : r.failed ? 'bg-rose-500' : 'bg-neutral-700'}`}
                     />
                     <span className="break-all text-left">{r.id}</span>
+                    {r.free && (
+                      <span className="text-[8px] px-1 bg-emerald-950 text-emerald-400 border border-emerald-800/60 font-bold flex-shrink-0">
+                        FREE
+                      </span>
+                    )}
                   </button>
                 );
                 return (

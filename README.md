@@ -81,6 +81,16 @@ Raw provider keys kabhi share mat karo.
 - `POST /api/keys/issue` (mint), `POST /api/keys/status` (counts+gmails, keys never),
   `POST /api/keys/revoke` (blocklist).
 
+## Live catalog (autonomous, free-only)
+
+- `POST /api/catalog/sync` 4 providers ke live `/models` se list kheenchta hai
+  (login pe + har 6h auto + Tester me SYNC button). Added/removed ka diff 🔔 aata hai.
+- **Sirf FREE models:** OpenRouter `pricing=0/0` filter (paid bahar); Gemini/Groq/Cerebras
+  free-tier keys pe chalne wale. Switcher default **Active** (key-hai + live + failed-nahi),
+  search + upstream groups + retired section ke saath.
+- Model 404 hua to auto-hide + notice; wapas aaya to auto-show.
+- `GET /api/v1/models` Bearer key pe har model pe `available` flag deta hai.
+
 ## Architecture notes
 
 - `api/*.ts` = Vercel serverless functions. **RULE: koi relative `.ts` cross-import nahi**

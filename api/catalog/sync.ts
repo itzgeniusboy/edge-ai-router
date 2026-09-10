@@ -32,6 +32,7 @@ export interface SyncedModel {
   id: string;
   name: string;
   upstream: string;
+  free?: boolean;
 }
 
 async function syncGemini(key: string): Promise<{ ok: boolean; models: SyncedModel[]; error?: string }> {
@@ -86,8 +87,15 @@ async function syncOpenRouter(): Promise<{ ok: boolean; models: SyncedModel[]; e
       const outMods: string[] = Array.isArray(m?.architecture?.output_modalities) ? m.architecture.output_modalities : [];
       // Sirf text-out chat models (embedding/image/audio bahar)
       if (outMods.length > 0 && !outMods.includes("text")) continue;
-      if (/embedding/i.test(id)) continue;
-      models.push({ id, name: typeof m?.name === "string" && m.name ? m.name : id, upstream: "prov-openrouter" });
+      if (/embedding|audio|video|image|tts|whisper|lyria/i.test(id)) continue;
+      // FREE-ONLY: pricing present hai to prompt+completion dono 0 hone chahiye (paid bahar)
+      const pr = m?.pricing;
+      if (pr && typeof pr === "object") {
+        const pp = Number((pr as any).prompt);
+        const pc = Number((pr as any).completion);
+        if (!Number.isFinite(pp) || !Number.isFinite(pc) || pp !== 0 || pc !== 0) continue;
+      }
+      models.push({ id, name: typeof m?.name === "string" && m.name ? m.name : id, upstream: "prov-openrouter", free: true });
       if (models.length >= MAX_MODELS_PER_UPSTREAM) break;
     }
     return { ok: true, models };

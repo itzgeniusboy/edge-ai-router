@@ -18,9 +18,9 @@ export const MODEL_UPSTREAM: Record<string, string> = {
   "llama-3.3-70b-versatile": "prov-groq",
   "mixtral-8x7b-32768": "prov-groq",
   "gemma2-9b-it": "prov-groq",
-  "openai/gpt-4o-mini": "prov-openrouter",
-  "meta-llama/llama-3.3-70b-instruct": "prov-openrouter",
-  "anthropic/claude-3.5-haiku": "prov-openrouter",
+  "google/gemma-4-31b-it:free": "prov-openrouter",
+  "nex-agi/nex-n2.5-mini:free": "prov-openrouter",
+  "liquid/lfm-2.5-2.6b:free": "prov-openrouter",
   "llama-3.3-70b": "prov-cerebras",
   "llama3.1-8b": "prov-cerebras",
 };
