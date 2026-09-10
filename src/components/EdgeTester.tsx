@@ -250,9 +250,14 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
 
             {/* Model Selector — green dot = is upstream ki key pool me hai */}
             <div className="space-y-2">
-              <label className="block text-xs font-mono uppercase tracking-wider text-neutral-300">
-                Target Model <span className="text-neutral-500 normal-case">(● key ready)</span>
-              </label>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="block text-xs font-mono uppercase tracking-wider text-neutral-300">
+                  Target Model <span className="text-neutral-500 normal-case">(● key ready)</span>
+                </label>
+                <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-400">
+                  Provider: <strong className="text-emerald-400">{activeProvider.name}</strong>
+                </span>
+              </div>
               <div className="flex flex-wrap gap-1.5 font-mono text-xs">
                 {modelsWithKeyStatus(
                   activeProvider.models,
