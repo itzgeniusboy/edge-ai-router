@@ -579,6 +579,35 @@ function selectEndpoint(nodes: RegionalEndpoint[]): RegionalEndpoint {
               </div>
             </div>
 
+            {/* Row 3: Provider ID — jaha ID dalni ho, yahi dalo */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-neutral-950 p-2.5 sm:p-3 border border-neutral-800">
+              <div className="min-w-0">
+                <span className="text-[10px] text-neutral-500 uppercase tracking-widest block">
+                  3. PROVIDER ID (jaha mange, yahi dalo)
+                </span>
+                <code className="text-xs sm:text-sm text-emerald-300 font-mono font-bold tracking-wide break-all select-all">
+                  prov-universal
+                </code>
+              </div>
+              <button
+                type="button"
+                onClick={() => copyToClipboard('prov-universal', 'providerid')}
+                className="flex items-center justify-center gap-1 px-3 py-1.5 bg-neutral-100 hover:bg-white text-neutral-950 font-bold text-xs font-mono uppercase tracking-wider transition-colors flex-shrink-0 w-full sm:w-auto"
+              >
+                {copiedType === 'providerid' ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>COPIED ID</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>COPY ID</span>
+                  </>
+                )}
+              </button>
+            </div>
+
             <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap flex-shrink-0">
               <button
                 type="button"

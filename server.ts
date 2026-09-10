@@ -334,8 +334,24 @@ const UNIVERSAL_MODELS_LOCAL: { id: string; upstream: string }[] = [
   { id: "llama3.1-8b", upstream: "prov-cerebras" },
 ];
 
-app.get("/api/v1/models", (_req, res) => {
+app.get("/api/v1/models", (req, res) => {
   const now = Math.floor(Date.now() / 1000);
+  const found: string[] = [];
+  const pushKey = (v: any) => {
+    if (typeof v !== "string") return;
+    const t = v.trim();
+    if (!t || t.toLowerCase() === "bearer" || t.startsWith("er1.")) return;
+    found.push(t);
+  };
+  pushKey(req.headers?.["x-api-key"]);
+  pushKey(req.headers?.["x-gemini-key"]);
+  const h = typeof req.headers?.authorization === "string" ? req.headers.authorization : "";
+  const m = h.match(/^Bearer\s*(.*)$/i);
+  pushKey(m ? m[1] : h);
+  const q = (req.query as any)?.key;
+  if (Array.isArray(q)) q.forEach(pushKey);
+  else pushKey(q);
+  const ups = found.length > 0 ? new Set(found.map(detectKeyUpstream)) : null;
   res.json({
     object: "list",
     data: UNIVERSAL_MODELS_LOCAL.map((m) => ({
@@ -345,6 +361,7 @@ app.get("/api/v1/models", (_req, res) => {
       owned_by: "edge-router",
       upstream: m.upstream,
       gateway: "prov-universal",
+      ...(ups ? { available: ups.has(m.upstream) } : {}),
     })),
   });
 });
@@ -398,6 +415,7 @@ CURRENT ROUTER STATE:
 - Site endpoint base: ${state?.siteBaseUrl || "(same origin)/api/v1"}
 - Provider catalog: ${(state?.providerCatalog || []).map((p: any) => `${p.id} (${p.baseUrl}, models: ${(p.models || []).slice(0, 3).join("/")}, key:${p.hasKey ? "yes" : "no"})`).join(" | ") || "prov-gemini"}
 - Upstream keys: ${(state?.upstreamKeyStatus || []).map((u: any) => `${u.upstream}:${u.hasKey ? "key-yes" : "no-key"}`).join(" | ") || "unknown"} — model WAHI suggest karo jiski key-yes ho; sab no-key ho to pehle KEYS tab me key dalwao, model mat chalwao.
+- Active models (verified working, max 40): ${(state?.activeModels || []).join(", ") || "unknown"} — sirf inhi me se suggest karo; bahar ka model naam kabhi mat do.
 
 COMPLETE ADMINISTRATIVE ACTION TAGS (EMIT THESE IN YOUR RESPONSE TO CONTROL THE ROUTER):
 Whenever the user asks you to configure, add, update, switch, or optimize anything, you MUST include the corresponding [ACTION:...] tag(s) in your response so the system immediately executes it:
@@ -866,6 +884,131 @@ app.post("/api/keys/revoke", async (req, res) => {
     return res.json({ revoked: true, mode: "global", mid, message: "Master key turant cut." });
   } catch {
     return res.status(500).json({ revoked: false, error: "Revoke fail ho gaya" });
+  }
+});
+
+// Live catalog sync — local-dev parity with api/catalog/sync.ts
+async function catalogFetchJson(url: string, headers: Record<string, string>): Promise<any> {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 8000);
+  try {
+    const r = await fetch(url, { headers, signal: ctl.signal });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      throw new Error(`HTTP ${r.status}${txt ? `: ${txt.slice(0, 120)}` : ""}`);
+    }
+    return await r.json();
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+app.post("/api/catalog/sync", async (req, res) => {
+  try {
+    const ink = req.body?.keys && typeof req.body.keys === "object" ? req.body.keys : {};
+    const first = (v: any): string => {
+      if (Array.isArray(v)) {
+        const f = v.find((k) => typeof k === "string" && k.trim());
+        return f ? f.trim() : "";
+      }
+      return typeof v === "string" && v.trim() ? v.trim() : "";
+    };
+    const gk = first(ink.gemini);
+    const gqk = first(ink.groq);
+    const ck = first(ink.cerebras);
+
+    const [gemini, groq, openrouter, cerebras] = await Promise.all([
+      (async () => {
+        if (!gk) return { ok: false as const, models: [] as any[], error: "no-key" };
+        try {
+          const j: any = await catalogFetchJson(
+            `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(gk)}&pageSize=100`,
+            {}
+          );
+          const models: any[] = [];
+          for (const m of Array.isArray(j?.models) ? j.models : []) {
+            const name = typeof m?.name === "string" ? m.name.replace(/^models\//, "") : "";
+            const methods: string[] = Array.isArray(m?.supportedGenerationMethods) ? m.supportedGenerationMethods : [];
+            if (!name || !methods.includes("generateContent")) continue;
+            if (/embedding|aqa|transcribe|tts|image|video|audio|live|bidi|robotics|lyria|veo|computer-use|deep-research|antigravity/i.test(name)) continue;
+            models.push({ id: name, name, upstream: "prov-gemini" });
+            if (models.length >= 150) break;
+          }
+          return { ok: true as const, models };
+        } catch (e: any) {
+          return { ok: false as const, models: [] as any[], error: e?.name === "AbortError" ? "timeout" : e?.message || "fetch-failed" };
+        }
+      })(),
+      (async () => {
+        if (!gqk) return { ok: false as const, models: [] as any[], error: "no-key" };
+        try {
+          const j: any = await catalogFetchJson("https://api.groq.com/openai/v1/models", { Authorization: `Bearer ${gqk}` });
+          const models: any[] = [];
+          for (const m of Array.isArray(j?.data) ? j.data : []) {
+            const id = typeof m?.id === "string" ? m.id : typeof m === "string" ? m : "";
+            if (!id || /whisper|embedding|tts|guard/i.test(id)) continue;
+            models.push({ id, name: id, upstream: "prov-groq" });
+            if (models.length >= 150) break;
+          }
+          return { ok: true as const, models };
+        } catch (e: any) {
+          return { ok: false as const, models: [] as any[], error: e?.name === "AbortError" ? "timeout" : e?.message || "fetch-failed" };
+        }
+      })(),
+      (async () => {
+        try {
+          const j: any = await catalogFetchJson("https://openrouter.ai/api/v1/models", {});
+          const models: any[] = [];
+          for (const m of Array.isArray(j?.data) ? j.data : []) {
+            const id = typeof m?.id === "string" ? m.id : "";
+            if (!id) continue;
+            const outMods: string[] = Array.isArray(m?.architecture?.output_modalities) ? m.architecture.output_modalities : [];
+            if (outMods.length > 0 && !outMods.includes("text")) continue;
+            if (/embedding/i.test(id)) continue;
+            models.push({ id, name: typeof m?.name === "string" && m.name ? m.name : id, upstream: "prov-openrouter" });
+            if (models.length >= 150) break;
+          }
+          return { ok: true as const, models };
+        } catch (e: any) {
+          return { ok: false as const, models: [] as any[], error: e?.name === "AbortError" ? "timeout" : e?.message || "fetch-failed" };
+        }
+      })(),
+      (async () => {
+        if (!ck) return { ok: false as const, models: [] as any[], error: "no-key" };
+        try {
+          const j: any = await catalogFetchJson("https://api.cerebras.ai/v1/models", { Authorization: `Bearer ${ck}` });
+          const arr = Array.isArray(j?.data) ? j.data : Array.isArray(j?.models) ? j.models : [];
+          if (!Array.isArray(arr) || arr.length === 0) return { ok: false as const, models: [] as any[], error: "unknown-shape" };
+          const models: any[] = [];
+          for (const m of arr) {
+            const id = typeof m?.id === "string" ? m.id : typeof m?.name === "string" ? m.name : typeof m === "string" ? m : "";
+            if (!id) continue;
+            models.push({ id, name: id, upstream: "prov-cerebras" });
+            if (models.length >= 150) break;
+          }
+          return { ok: true as const, models };
+        } catch (e: any) {
+          return { ok: false as const, models: [] as any[], error: e?.name === "AbortError" ? "timeout" : e?.message || "fetch-failed" };
+        }
+      })(),
+    ]);
+
+    const models = [...gemini.models, ...groq.models, ...openrouter.models, ...cerebras.models];
+    const status = (r: { ok: boolean; models: any[]; error?: string }) =>
+      r.ok ? { ok: true as const, count: r.models.length } : { ok: false as const, count: 0, error: r.error || "failed" };
+    return res.json({
+      syncedAt: Date.now(),
+      models,
+      perUpstream: {
+        "prov-gemini": status(gemini),
+        "prov-groq": status(groq),
+        "prov-openrouter": status(openrouter),
+        "prov-cerebras": status(cerebras),
+      },
+    });
+  } catch (err: any) {
+    console.error("catalog/sync error:", err?.message || err);
+    return res.status(500).json({ error: "Sync fail ho gaya" });
   }
 });
 

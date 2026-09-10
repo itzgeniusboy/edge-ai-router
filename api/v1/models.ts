@@ -16,11 +16,43 @@ const UNIVERSAL_MODELS: { id: string; upstream: string }[] = [
   { id: "llama3.1-8b", upstream: "prov-cerebras" },
 ];
 
+function upstreamOfKey(k: string): string {
+  const key = (k || "").trim();
+  if (/^AIza[0-9A-Za-z\-_]{20,}/.test(key) || /^AQ\.[A-Za-z0-9\-_.]{40,}/.test(key)) return "prov-gemini";
+  if (key.startsWith("gsk_")) return "prov-groq";
+  if (key.startsWith("sk-or-")) return "prov-openrouter";
+  if (key.startsWith("csk-")) return "prov-cerebras";
+  return "unknown";
+}
+
+// Optional personalization: Bearer/direct/?key= key bhejoge to har model pe
+// available:true/false lag jayega (tumhari keys ke hisaab se). Bina key: flag nahi.
+function callerUpstreams(req: any): Set<string> | null {
+  const found: string[] = [];
+  const push = (v: any) => {
+    if (typeof v !== "string") return;
+    const t = v.trim();
+    if (!t || t.toLowerCase() === "bearer" || t.startsWith("er1.")) return;
+    found.push(t);
+  };
+  push(req.headers?.["x-api-key"]);
+  push(req.headers?.["x-gemini-key"]);
+  const h = typeof req.headers?.authorization === "string" ? req.headers.authorization : "";
+  const m = h.match(/^Bearer\s*(.*)$/i);
+  push(m ? m[1] : h);
+  const q = req.query?.key;
+  if (Array.isArray(q)) q.forEach(push);
+  else push(q);
+  if (found.length === 0) return null;
+  return new Set(found.map(upstreamOfKey));
+}
+
 export default async function handler(req: any, res: any) {
   if (req.method !== "GET") {
     return res.status(405).json({ error: { message: "Method not allowed", type: "invalid_request_error" } });
   }
   const now = Math.floor(Date.now() / 1000);
+  const ups = callerUpstreams(req);
   return res.json({
     object: "list",
     data: UNIVERSAL_MODELS.map((m) => ({
@@ -30,6 +62,7 @@ export default async function handler(req: any, res: any) {
       owned_by: "edge-router",
       upstream: m.upstream,
       gateway: "prov-universal",
+      ...(ups ? { available: ups.has(m.upstream) } : {}),
     })),
   });
 }
