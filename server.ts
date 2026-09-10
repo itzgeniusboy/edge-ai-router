@@ -366,6 +366,7 @@ CURRENT ROUTER STATE:
 - Average Latency: ${state?.avgLatency || "18"}ms
 - Site endpoint base: ${state?.siteBaseUrl || "(same origin)/api/v1"}
 - Provider catalog: ${(state?.providerCatalog || []).map((p: any) => `${p.id} (${p.baseUrl}, models: ${(p.models || []).slice(0, 3).join("/")}, key:${p.hasKey ? "yes" : "no"})`).join(" | ") || "prov-gemini"}
+- Upstream keys: ${(state?.upstreamKeyStatus || []).map((u: any) => `${u.upstream}:${u.hasKey ? "key-yes" : "no-key"}`).join(" | ") || "unknown"} — model WAHI suggest karo jiski key-yes ho; sab no-key ho to pehle KEYS tab me key dalwao, model mat chalwao.
 
 COMPLETE ADMINISTRATIVE ACTION TAGS (EMIT THESE IN YOUR RESPONSE TO CONTROL THE ROUTER):
 Whenever the user asks you to configure, add, update, switch, or optimize anything, you MUST include the corresponding [ACTION:...] tag(s) in your response so the system immediately executes it:

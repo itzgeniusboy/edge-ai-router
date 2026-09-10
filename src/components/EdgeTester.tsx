@@ -21,6 +21,7 @@ import { SmartPromptRouter, PromptAnalysis } from '../services/autonomousWatchdo
 import { SkeletonLoader } from './SkeletonLoader';
 import { getActiveGeminiKey } from '../utils/auth';
 import { getAllProviderKeys, markDeadByPrefixes, reviveProviderKey } from '../utils/providerKeys';
+import { modelsWithKeyStatus } from '../utils/upstream';
 import { notify } from '../utils/notify';
 
 interface EdgeTesterProps {
@@ -247,24 +248,34 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
               </div>
             </div>
 
-            {/* Model Selector */}
+            {/* Model Selector — green dot = is upstream ki key pool me hai */}
             <div className="space-y-2">
               <label className="block text-xs font-mono uppercase tracking-wider text-neutral-300">
-                Target Model
+                Target Model <span className="text-neutral-500 normal-case">(● key ready)</span>
               </label>
               <div className="flex flex-wrap gap-1.5 font-mono text-xs">
-                {activeProvider.models.map((m) => (
+                {modelsWithKeyStatus(
+                  activeProvider.models,
+                  getAllProviderKeys((providers || []).map((p) => p.id))
+                ).map(({ model: m, upstreamName, hasKey }) => (
                   <button
                     key={m}
                     type="button"
                     onClick={() => setSelectedModel(m)}
-                    className={`px-2.5 py-1 text-xs border transition-all duration-150 ${
+                    title={hasKey ? `${m} → ${upstreamName} (key ready)` : `${m} → ${upstreamName} (KEY NAHI HAI — pehle KEYS me dalo)`}
+                    className={`px-2.5 py-1 text-xs border transition-all duration-150 flex items-center gap-1.5 ${
                       selectedModel === m
                         ? 'border-neutral-200 bg-white text-neutral-950 font-bold'
-                        : 'border-neutral-800 bg-neutral-950 text-neutral-400 hover:text-white'
+                        : hasKey
+                          ? 'border-neutral-700 bg-neutral-950 text-neutral-200 hover:text-white'
+                          : 'border-neutral-800 bg-neutral-950/40 text-neutral-500 hover:text-neutral-300'
                     }`}
                   >
-                    {m}
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${hasKey ? 'bg-emerald-400' : 'bg-neutral-700'}`}
+                    />
+                    <span>{m}</span>
+                    <span className="text-[9px] opacity-70">{upstreamName}</span>
                   </button>
                 ))}
               </div>
