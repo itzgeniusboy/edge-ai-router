@@ -197,6 +197,7 @@ export const WorkerExporter: React.FC<WorkerExporterProps> = ({
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer ${displayKey}" \\
   -d '{
+    "providerId": "prov-universal",
     "model": "${proxyModel}",
     "messages": [
       {"role": "user", "content": "Hello! Explain quantum computing in 2 sentences."}
@@ -218,6 +219,7 @@ response = client.chat.completions.create(
         {"role": "user", "content": "How do edge distributed systems handle failovers?"}
     ],
     temperature=0.7,
+    extra_body={"providerId": "prov-universal"},
 )
 
 print(response.choices[0].message.content)`,
@@ -236,7 +238,9 @@ async function main() {
     messages: [
       { role: "user", content: "Summarize edge routing." }
     ],
-  });
+    // @ts-ignore site provider ID (optional — default bhi universal hai)
+    providerId: "prov-universal",
+  } as any);
 
   console.log(completion.choices[0].message.content);
 }

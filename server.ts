@@ -421,7 +421,8 @@ RESPONSE STYLE (STRICT — SHORT & PROFESSIONAL):
 3. When the user asks for a command, endpoint URL, key steps or code: give it FIRST in a fenced code block, then max 1-line note. Never bury commands inside paragraphs.
 4. Action receipts: one short line per executed action.
 
-SITE GATEWAY CONTEXT (ONE universal provider — no providerId needed):
+SITE GATEWAY CONTEXT (ONE universal provider — official ID: prov-universal):
+- Jaha bhi provider ID dalni pade, waha "prov-universal" dalo. Model naam se auto-route hota hai, ID optional hai.
 - Public endpoint: {siteBaseUrl}/chat/completions (OpenAI-compatible). siteBaseUrl is given in CURRENT ROUTER STATE below.
 - Auth header: Authorization: Bearer <user's UNIQUE master key from Export tab>.
 - Sirf model naam bhejo — server model se upstream auto-route karta hai (gemini-* → Gemini, llama-3.3-70b-versatile → Groq, openai/* → OpenRouter, llama-3.3-70b → Cerebras).
@@ -560,6 +561,7 @@ app.post("/api/router/inference", async (req, res) => {
         const text = r.data.choices[0].message?.content || "OK";
         const tokens = r.data.usage?.total_tokens || Math.max(15, Math.ceil(text.length / 4) + Math.ceil(prompt.length / 4));
         const served = custom.baseUrl ? "custom" : upId === "unknown" ? target || "prov-gemini" : upId;
+        res.setHeader("X-Edge-Provider", "prov-universal");
         res.setHeader("X-Edge-Upstream", served);
         res.setHeader("X-Edge-Key-Index", String(i));
         return res.json({
@@ -644,6 +646,7 @@ app.post("/api/v1/chat/completions", async (req, res) => {
         const promptTokens = usage.prompt_tokens ?? openaiMessages.reduce((acc: number, m: any) => acc + Math.ceil((m.content || "").length / 4), 0);
         const completionTokens = usage.completion_tokens ?? Math.ceil(responseText.length / 4);
         const served = custom.baseUrl ? "custom" : upId === "unknown" ? target || "prov-gemini" : upId;
+        res.setHeader("X-Edge-Provider", "prov-universal");
         res.setHeader("X-Edge-Upstream", served);
         res.setHeader("X-Edge-Key-Index", String(i));
         res.setHeader("X-Edge-Keys-Tried", String(i + 1));
@@ -668,8 +671,9 @@ app.post("/api/v1/chat/completions", async (req, res) => {
           },
           edge_routing: {
             provider: up.name,
-            provider_id: served,
-            gateway: "prov-universal",
+            // Canonical site provider ID — jaha ID dalni ho, yahi dalo:
+            provider_id: "prov-universal",
+            upstream_id: served,
             key_index: i,
             key_prefix: typeof ordered[i] === "string" ? ordered[i].slice(0, 8) : "",
             keys_tried: i + 1,
