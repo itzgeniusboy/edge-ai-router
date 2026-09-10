@@ -20,7 +20,7 @@ import { EdgeRouterEngine, markProviderKeysExhausted } from '../services/edgeRou
 import { SmartPromptRouter, PromptAnalysis } from '../services/autonomousWatchdog';
 import { SkeletonLoader } from './SkeletonLoader';
 import { getActiveGeminiKey } from '../utils/auth';
-import { getAllProviderKeys } from '../utils/providerKeys';
+import { getAllProviderKeys, markDeadByPrefixes, reviveProviderKey } from '../utils/providerKeys';
 import { notify } from '../utils/notify';
 
 interface EdgeTesterProps {
@@ -124,6 +124,15 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
             }),
           });
 
+          const reportDead = (prefixes: any) => {
+            const list = Array.isArray(prefixes) ? prefixes.filter((p) => typeof p === 'string') : [];
+            if (list.length === 0) return;
+            const fresh = markDeadByPrefixes(decision.providerId, list);
+            fresh.forEach((e) => {
+              notify('error', `Dead key OUT: ${decision.providerName}`, `#${pool.findIndex((k) => k === e.k) + 1}${e.g ? ` (${e.g})` : ''} kaam nahi kar rahi — us Gmail se nayi nikalo.`);
+            });
+          };
+
           if (res.ok) {
             const data = await res.json();
             const text = data.choices?.[0]?.message?.content || '';
@@ -133,7 +142,13 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
             decision.tokensUsed = data.usage?.total_tokens || decision.tokensUsed;
             decision.isLive = true;
             const ki = data.edge_routing?.key_index;
-            if (typeof ki === 'number') decision.apiKeyIndex = ki;
+            if (typeof ki === 'number') {
+              decision.apiKeyIndex = ki;
+              if (reviveProviderKey(decision.providerId, ki)) {
+                notify('success', `Key wapas live: ${decision.providerName} #${ki + 1}`, 'Dead mark hata diya.');
+              }
+            }
+            reportDead(data.edge_routing?.dead_key_prefixes);
             if (decision.crossProviderFailover || (data.edge_routing?.keys_tried || 1) > 1) {
               notify('warn', `Key rotate: ${decision.providerName}`, `Key #${(ki ?? 0) + 1} se jawab aaya.`);
             }
@@ -144,6 +159,7 @@ export const EdgeTester: React.FC<EdgeTesterProps> = ({
           } else if (res.status === 429 || res.status === 502) {
             const data = await res.json().catch(() => null);
             markProviderKeysExhausted(decision.providerId, Math.max(1, pool.length));
+            reportDead(data?.error?.dead_key_prefixes || data?.edge_routing?.dead_key_prefixes);
             decision.responsePayload = data?.error?.message || `Upstream busy (${res.status}). 60s cooldown lagaya.`;
             decision.isLive = false;
             notify('error', `Quota/busy: ${decision.providerName}`, 'Keys 60s cooldown pe. Fallback ya nayi key lagao.');

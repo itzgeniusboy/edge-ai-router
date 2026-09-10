@@ -18,9 +18,12 @@ import {
   EyeOff,
   RefreshCw,
   Lock,
-  CheckCircle2
+  CheckCircle2,
+  Trash2
 } from 'lucide-react';
 import { Endpoint, Provider, RoutingPolicy } from '../types/router';
+import { getProviderKeyEntries, poolsSnapshot } from '../utils/providerKeys';
+import { notify } from '../utils/notify';
 
 interface WorkerExporterProps {
   activeProvider: Provider;
@@ -45,9 +48,126 @@ export const WorkerExporter: React.FC<WorkerExporterProps> = ({
   const [selectedLanguage, setSelectedLanguage] = useState<'curl' | 'python' | 'node' | 'opencode' | 'nextjs'>('python');
   const [proxyModel, setProxyModel] = useState<string>('gemini-flash-latest');
 
-  // SINGLE-GATEWAY: key = logged-in user ki Gemini key (signup wali). Koi nakli sk-er key nahi.
-  const proxyApiKey = userGeminiKey || '';
+  // UNIQUE MASTER KEY per user: link + ye key bahar use karo.
+  // Background me isi me embedded provider pools se relay hota hai. Raw keys kabhi bahar nahi.
+  const [masterKey, setMasterKey] = useState<string>(() => {
+    try {
+      return localStorage.getItem('er_master_key') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [masterMeta, setMasterMeta] = useState<any>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('er_master_meta') || 'null');
+    } catch {
+      return null;
+    }
+  });
   const [showApiKey, setShowApiKey] = useState(false);
+  const [masterBusy, setMasterBusy] = useState(false);
+  const [masterMsg, setMasterMsg] = useState('');
+
+  const poolSigNow = (() => {
+    try {
+      return poolsSnapshot((providers || []).map((p) => p.id));
+    } catch {
+      return '';
+    }
+  })();
+  const masterStale = !!masterKey && !!masterMeta && masterMeta.poolsSnapshot !== poolSigNow;
+  const proxyApiKey = masterKey;
+  const masterExpiryText = (() => {
+    try {
+      if (!masterMeta?.expiresAt) return '';
+      const d = new Date(masterMeta.expiresAt);
+      return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return '';
+    }
+  })();
+
+  const saveMaster = (key: string, meta: any) => {
+    setMasterKey(key);
+    setMasterMeta(meta);
+    try {
+      if (key) {
+        localStorage.setItem('er_master_key', key);
+        localStorage.setItem('er_master_meta', JSON.stringify(meta));
+      } else {
+        localStorage.removeItem('er_master_key');
+        localStorage.removeItem('er_master_meta');
+      }
+    } catch { /* ignore */ }
+  };
+
+  const handleGenerateMaster = async (label: string) => {
+    setMasterBusy(true);
+    setMasterMsg('');
+    try {
+      const pools: Record<string, { k: string; g: string }[]> = {};
+      (providers || []).forEach((p) => {
+        const entries = getProviderKeyEntries(p.id);
+        if (entries.length > 0) pools[p.id] = entries.map((e) => ({ k: e.k, g: e.g }));
+      });
+      if (Object.keys(pools).length === 0) {
+        setMasterMsg('Pehle KEYS button se kam se kam 1 provider key dalo.');
+        notify('warn', 'Master key nahi bani', 'Pools khali hai — pehle keys dalo.');
+        return;
+      }
+      const res = await fetch('/api/keys/issue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keys: pools, label }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.masterKey) {
+        setMasterMsg(data?.error || 'Generate fail ho gaya.');
+        notify('error', 'Master generate fail', data?.error || 'Dobara try karo.');
+        return;
+      }
+      saveMaster(data.masterKey, {
+        mid: data.mid,
+        label: data.label || label,
+        expiresAt: data.expiresAt,
+        counts: data.providers,
+        poolsSnapshot: poolSigNow,
+      });
+      setMasterMsg(`Master key ban gayi ✓ (expiry: ${new Date(data.expiresAt).toLocaleDateString()})`);
+      notify('success', 'Master key generated', `${Object.keys(data.providers || {}).length} providers embedded, 90 din valid.`);
+    } catch (e: any) {
+      setMasterMsg('Network error — dobara try karo.');
+    } finally {
+      setMasterBusy(false);
+    }
+  };
+
+  const handleDeleteMaster = async () => {
+    if (!masterKey) return;
+    setMasterBusy(true);
+    try {
+      let mode = 'local-only';
+      try {
+        const res = await fetch('/api/keys/revoke', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ masterKey }),
+        });
+        const data = await res.json().catch(() => null);
+        mode = data?.mode || (data?.revoked ? 'global' : 'local-only');
+      } catch { /* offline -> local wipe still */ }
+      saveMaster('', null);
+      if (mode === 'global') {
+        setMasterMsg('Master key turant cut (global revoke) ✓');
+        notify('success', 'Master revoked', 'Ye key kahin bhi kaam nahi karegi. Nayi Generate kar lo.');
+      } else {
+        setMasterMsg('App se hata di. Global instant-revoke ke liye Vercel KV connect karo.');
+        notify('warn', 'Master local-delete', 'Is device se hati. Baanti copies expiry tak chalengi (KV nahi hai).');
+      }
+    } finally {
+      setMasterBusy(false);
+    }
+  };
 
   const providerEndpoints = endpoints.filter(
     (ep) => ep.providerId === activeProvider.id && ep.enabled
@@ -70,8 +190,8 @@ export const WorkerExporter: React.FC<WorkerExporterProps> = ({
   })();
   const fullEndpoint = `${universalBaseUrl}/chat/completions`;
 
-  // Client snippets for SINGLE endpoint + per-user Gemini key
-  const displayKey = proxyApiKey || 'tumhari-signup-wali-key';
+  // Client snippets: link + UNIQUE master key (background me pools se relay)
+  const displayKey = proxyApiKey || 'er1...generate-karo';
   const codeSnippets: Record<'curl' | 'python' | 'node' | 'opencode' | 'nextjs', string> = {
     curl: `curl -X POST "${fullEndpoint}" \\
   -H "Content-Type: application/json" \\
@@ -86,7 +206,7 @@ export const WorkerExporter: React.FC<WorkerExporterProps> = ({
 
     python: `from openai import OpenAI
 
-# Single gateway + tumhari Gemini key (signup wali)
+# Gateway link + tumhari UNIQUE master key (Export tab se)
 client = OpenAI(
     base_url="${universalBaseUrl}",
     api_key="${displayKey}",
@@ -104,7 +224,7 @@ print(response.choices[0].message.content)`,
 
     node: `import OpenAI from "openai";
 
-// Single gateway + tumhari Gemini key
+// Gateway link + tumhari UNIQUE master key
 const client = new OpenAI({
   baseURL: "${universalBaseUrl}",
   apiKey: "${displayKey}",
@@ -418,25 +538,39 @@ function selectEndpoint(nodes: RegionalEndpoint[]): RegionalEndpoint {
           </button>
         </div>
 
-        {/* Row 2: Per-user Gemini key (signup wali) */}
+        {/* Row 2: UNIQUE master key (link + ye key bahar use karo) */}
         <div className="border-b border-neutral-800 pb-4 space-y-3 min-w-0 max-w-full">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-neutral-500 uppercase tracking-widest block truncate">
-                2. TUMHARI GEMINI KEY (AUTHORIZATION)
+                2. TUMHARI UNIQUE MASTER KEY
               </span>
               <span className="text-[9px] bg-emerald-950/60 text-emerald-400 border border-emerald-800/80 px-1.5 py-0.5 font-bold">
-                PER-USER AUTH
+                {masterKey ? (masterStale ? 'STALE — REGENERATE' : 'ACTIVE') : 'NOT GENERATED'}
               </span>
             </div>
+            {masterExpiryText && (
+              <span className="text-[10px] text-neutral-500">expiry: {masterExpiryText}</span>
+            )}
           </div>
+
+          {masterStale && (
+            <div className="p-2.5 bg-amber-950/60 border border-amber-800/60 text-amber-300 text-[11px] font-sans">
+              Pools badal gayi hai (key add/remove) — ye master purani pools pe chalegi. Regenerate karo.
+            </div>
+          )}
+          {masterMsg && (
+            <div className="p-2.5 bg-neutral-950 border border-neutral-700 text-neutral-300 text-[11px] font-sans break-words">
+              {masterMsg}
+            </div>
+          )}
 
           <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5 bg-neutral-950 p-2.5 sm:p-3 border border-neutral-800">
             <div className="flex items-center gap-2.5 min-w-0 flex-1">
               <Key className="w-4 h-4 text-emerald-400 flex-shrink-0" />
               <div className="min-w-0 flex-1">
                 <code className="text-xs sm:text-sm text-neutral-200 font-mono font-bold tracking-wide break-all select-all">
-                  {proxyApiKey ? (showApiKey ? proxyApiKey : `${proxyApiKey.substring(0, 10)}••••••••••••••••`) : 'Login me Gemini key dalo'}
+                  {proxyApiKey ? (showApiKey ? proxyApiKey : `${proxyApiKey.substring(0, 12)}••••••••••••••••••••`) : 'Generate dabao — har user ki alag key banegi'}
                 </code>
               </div>
             </div>
@@ -471,8 +605,32 @@ function selectEndpoint(nodes: RegionalEndpoint[]): RegionalEndpoint {
             </div>
           </div>
 
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              disabled={masterBusy}
+              onClick={() => handleGenerateMaster(masterMeta?.label || 'web')}
+              className="flex items-center gap-1 px-3 py-1.5 bg-emerald-400 hover:bg-emerald-300 disabled:opacity-50 text-neutral-950 font-bold text-xs font-mono uppercase transition-colors"
+            >
+              <Key className="w-3.5 h-3.5" />
+              <span>{masterBusy ? 'WAIT...' : masterKey ? 'REGENERATE' : 'GENERATE MY KEY'}</span>
+            </button>
+            {masterKey && (
+              <button
+                type="button"
+                disabled={masterBusy}
+                onClick={handleDeleteMaster}
+                title="Revoke + app se hatao"
+                className="flex items-center gap-1 px-3 py-1.5 bg-neutral-900 hover:bg-rose-950/60 text-neutral-300 hover:text-rose-300 border border-neutral-700 hover:border-rose-800/60 disabled:opacity-50 text-xs font-mono uppercase transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>DELETE</span>
+              </button>
+            )}
+          </div>
+
           <p className="text-[11px] text-neutral-400 font-sans leading-relaxed">
-            Ye wahi key hai jo signup me dali thi. Ise <code className="text-neutral-200 font-mono bg-neutral-950 px-1 border border-neutral-800">Authorization: Bearer</code> me bhejo. Endpoint single hai, key har user ki alag.
+            Upar wala <strong>link</strong> + ye <strong>master key</strong> bahar (Python/OpenCode/curl) me dalo — background me tumhari saari provider keys se relay hoga. Raw provider keys kabhi share mat karo.
           </p>
 
           {/* 1-Click Quick Setup Helpers for Terminal / .env / Cursor */}

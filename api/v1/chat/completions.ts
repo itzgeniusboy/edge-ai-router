@@ -1,7 +1,77 @@
 // Multi-provider OpenAI-compatible gateway — FULLY SELF-CONTAINED (no cross-file imports).
 // Body: { providerId?, baseUrl? (custom), model?, messages, max_tokens?, temperature?, apiKeys?/clientApiKey? }
-// Keys: x-api-key header OR Authorization Bearer OR body key(s). Tried in order (rotation).
+// Keys: master key (er1...) OR x-api-key header OR Authorization Bearer OR body key(s).
+// Master decrypts to the user's pools; pool for providerId is tried in order (rotation).
 // SSRF guard: catalog hosts + public-https-only custom hosts.
+import crypto from "node:crypto";
+import { inflateSync } from "node:zlib";
+
+const MASTER_PREFIX = "er1.";
+
+function masterSecret(): Buffer {
+  return crypto
+    .createHash("sha256")
+    .update(process.env.MASTER_KEY_SECRET || "er-dev-fallback-secret-v1-do-not-use-in-prod")
+    .digest();
+}
+
+function masterDecrypt(token: string): any {
+  if (typeof token !== "string" || !token.startsWith(MASTER_PREFIX)) {
+    const e: any = new Error("not-a-master-key");
+    e.code = "NOT_MASTER";
+    throw e;
+  }
+  let payload: any;
+  try {
+    const raw = Buffer.from(token.slice(MASTER_PREFIX.length), "base64url");
+    if (raw.length < 29) throw new Error("bad");
+    const iv = raw.subarray(0, 12);
+    const tag = raw.subarray(raw.length - 16);
+    const ct = raw.subarray(12, raw.length - 16);
+    const d = crypto.createDecipheriv("aes-256-gcm", masterSecret(), iv);
+    d.setAuthTag(tag);
+    payload = JSON.parse(inflateSync(Buffer.concat([d.update(ct), d.final()])).toString("utf8"));
+  } catch (err: any) {
+    if (err?.code === "NOT_MASTER") throw err;
+    const e: any = new Error("bad-master-key");
+    e.code = "BAD_MASTER";
+    throw e;
+  }
+  if (!payload || payload.v !== 1 || typeof payload.exp !== "number" || typeof payload.keys !== "object") {
+    const e: any = new Error("bad-master-key");
+    e.code = "BAD_MASTER";
+    throw e;
+  }
+  if (payload.exp <= Date.now()) {
+    const e: any = new Error("master-key-expired");
+    e.code = "EXPIRED";
+    throw e;
+  }
+  return payload;
+}
+
+// Revoked-master check (KV). Missing KV / errors => fail-open (allow), logged.
+async function isMasterRevoked(mid: string): Promise<boolean> {
+  const url = process.env.KV_REST_API_URL;
+  const tok = process.env.KV_REST_API_TOKEN;
+  if (!url || !tok || !mid) return false;
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 2500);
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
+      body: JSON.stringify(["GET", `er:revoked:${mid}`]),
+      signal: ctl.signal,
+    });
+    clearTimeout(t);
+    const j: any = await r.json().catch(() => null);
+    return j?.result === "1";
+  } catch (e) {
+    console.warn("KV GET fail-open:", (e as any)?.message || e);
+    return false;
+  }
+}
 const PROVIDER_CATALOG: Record<string, { name: string; baseUrl: string; defaultModel: string }> = {
   "prov-gemini": { name: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", defaultModel: "gemini-flash-latest" },
   "prov-groq": { name: "Groq", baseUrl: "https://api.groq.com/openai/v1", defaultModel: "llama-3.3-70b-versatile" },
@@ -34,6 +104,15 @@ function isAllowedUpstream(raw: string): boolean {
   }
 }
 
+function bearerToken(req: any): string {
+  const h = typeof req.headers?.authorization === "string" ? req.headers.authorization : "";
+  const m = h.match(/^Bearer\s*(.*)$/i);
+  const tok = (m ? m[1] : h).trim();
+  // Bare "Bearer" (no token) is not a key
+  if (!tok || tok.toLowerCase() === "bearer") return "";
+  return tok;
+}
+
 function collectKeys(req: any, body: any): string[] {
   const out: string[] = [];
   const push = (v: any) => {
@@ -41,7 +120,7 @@ function collectKeys(req: any, body: any): string[] {
   };
   push(req.headers["x-api-key"]);
   push(req.headers["x-gemini-key"]);
-  push((req.headers.authorization || "").replace(/^Bearer\s+/i, ""));
+  push(bearerToken(req));
   if (Array.isArray(body?.apiKeys)) body.apiKeys.forEach(push);
   push(body?.clientApiKey);
   return [...new Set(out)];
@@ -98,7 +177,31 @@ export default async function handler(req: any, res: any) {
       baseUrl = custom;
     }
 
-    const keys = collectKeys(req, body);
+    let keys = collectKeys(req, body);
+    let masterInfo: { mid: string; label: string } | null = null;
+    const maybeMaster = keys.find((k) => k.startsWith(MASTER_PREFIX)) || (typeof body.masterKey === "string" && body.masterKey.trim().startsWith(MASTER_PREFIX) ? body.masterKey.trim() : "");
+    if (maybeMaster) {
+      let payload: any;
+      try {
+        payload = masterDecrypt(maybeMaster);
+      } catch (e: any) {
+        const msg =
+          e?.code === "EXPIRED"
+            ? "Master key expire ho gayi — site se Regenerate karo."
+            : "Master key invalid hai — site se dobara copy karo.";
+        return res.status(401).json({ error: { message: msg, type: "authentication_error" } });
+      }
+      if (await isMasterRevoked(payload.mid)) {
+        return res.status(401).json({ error: { message: "Ye master key revoke (delete) ho chuki hai — nayi generate karo.", type: "authentication_error" } });
+      }
+      const pool = payload.keys?.[providerId];
+      const arr = Array.isArray(pool) ? pool.map((e: any) => (typeof e === "string" ? e : e?.k)).filter((k: any) => typeof k === "string" && k) : [];
+      if (arr.length === 0) {
+        return res.status(401).json({ error: { message: `Is master key me ${providerName} ki koi key nahi hai — site pe KEYS me add karke master Regenerate karo.`, type: "authentication_error" } });
+      }
+      keys = arr;
+      masterInfo = { mid: payload.mid, label: payload.label || "" };
+    }
     if (keys.length === 0) {
       return res.status(401).json({
         error: {
@@ -118,6 +221,8 @@ export default async function handler(req: any, res: any) {
 
     let lastErr = "unknown error";
     let lastStatus = 502;
+    const deadKeyIndexes: number[] = [];
+    const deadKeyPrefixes: string[] = [];
     for (let i = 0; i < keys.length; i++) {
       const r = await relayChatCompletion({ baseUrl, apiKey: keys[i], model: wanted, messages: openaiMessages, maxTokens: max_tokens, temperature });
       if (r.ok) {
@@ -155,6 +260,8 @@ export default async function handler(req: any, res: any) {
             provider_id: providerId,
             key_index: i,
             keys_tried: i + 1,
+            dead_key_indexes: deadKeyIndexes,
+            dead_key_prefixes: deadKeyPrefixes,
             latency_ms: latencyMs,
             status: "200 OK",
           },
@@ -162,6 +269,11 @@ export default async function handler(req: any, res: any) {
       }
       lastStatus = r.status;
       lastErr = r.data?.error?.message || r.data?.message || `Upstream HTTP ${r.status}`;
+      // 401/403 = definitively dead key -> report for auto-quarantine (never on 429/5xx)
+      if ((r.status === 401 || r.status === 403) && typeof keys[i] === "string") {
+        deadKeyIndexes.push(i);
+        deadKeyPrefixes.push(keys[i].slice(0, 8));
+      }
       if (![401, 403, 429, 500, 502, 503, 504].includes(r.status)) break;
     }
 
@@ -170,6 +282,8 @@ export default async function handler(req: any, res: any) {
         message: `${providerName}: ${lastErr} (${keys.length} key${keys.length > 1 ? "s" : ""} tried)`,
         type: "upstream_error",
         provider_id: providerId,
+        dead_key_indexes: deadKeyIndexes,
+        dead_key_prefixes: deadKeyPrefixes,
       },
     });
   } catch (err: any) {

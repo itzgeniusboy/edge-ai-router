@@ -62,9 +62,12 @@ export default async function handler(req: any, res: any) {
     const push = (v: any) => {
       if (typeof v === "string" && v.trim()) keys.push(v.trim());
     };
+    const authH = typeof req.headers?.authorization === "string" ? req.headers.authorization : "";
+    const bm = authH.match(/^Bearer\s*(.*)$/i);
+    const bearer = (bm ? bm[1] : authH).trim();
     push(req.headers["x-api-key"]);
     push(req.headers["x-gemini-key"]);
-    push((req.headers.authorization || "").replace(/^Bearer\s+/i, ""));
+    if (bearer && bearer.toLowerCase() !== "bearer") push(bearer);
     if (Array.isArray(body.apiKeys)) body.apiKeys.forEach(push);
     push(clientApiKey);
     const uniq = [...new Set(keys)];
