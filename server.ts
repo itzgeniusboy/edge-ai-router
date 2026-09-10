@@ -336,6 +336,46 @@ const UNIVERSAL_MODELS_LOCAL: { id: string; upstream: string }[] = [
 
 app.get("/api/v1/models", (req, res) => {
   const now = Math.floor(Date.now() / 1000);
+  // Master key di hai to validate karo (Nexus key-check): galat/expire -> 401.
+  const mcands = [
+    req.headers?.["x-master-key"],
+    (() => {
+      const h = typeof req.headers?.authorization === "string" ? req.headers.authorization : "";
+      const m = h.match(/^Bearer\s*(.*)$/i);
+      return m ? m[1] : h;
+    })(),
+    Array.isArray((req.query as any)?.key) ? (req.query as any).key[0] : (req.query as any)?.key,
+  ];
+  const masterTok = mcands.find((c) => typeof c === "string" && c.trim().startsWith("er1."))?.trim() || "";
+  if (masterTok) {
+    try {
+      const payload = masterDecryptLocal(masterTok);
+      const set = new Set<string>();
+      Object.keys(payload.keys || {}).forEach((pid) => {
+        const arr = payload.keys[pid];
+        if (Array.isArray(arr) && arr.length > 0) set.add(pid);
+      });
+      return res.json({
+        object: "list",
+        data: UNIVERSAL_MODELS_LOCAL.map((m) => ({
+          id: m.id,
+          object: "model",
+          created: now,
+          owned_by: "edge-router",
+          upstream: m.upstream,
+          gateway: "Edge Router",
+          available: set.has(m.upstream) || set.has("Edge Router") || set.has("prov-universal"),
+        })),
+      });
+    } catch (e: any) {
+      return res.status(401).json({
+        error: {
+          message: e?.code === "EXPIRED" ? "Master key expire ho gayi — Regenerate karo." : "Master key invalid hai.",
+          type: "authentication_error",
+        },
+      });
+    }
+  }
   const found: string[] = [];
   const pushKey = (v: any) => {
     if (typeof v !== "string") return;
