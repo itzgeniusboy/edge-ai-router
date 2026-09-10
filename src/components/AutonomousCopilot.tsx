@@ -26,7 +26,7 @@ import {
 import { Provider, Endpoint, RoutingPolicy } from '../types/router';
 import { CopyButton } from './CopyButton';
 import { stripActionTags, splitCodeSegments, findUrls } from '../utils/copy';
-import { getProviderKeys } from '../utils/providerKeys';
+import { getProviderKeys, getAllProviderKeys } from '../utils/providerKeys';
 import { notify } from '../utils/notify';
 
 interface Message {
@@ -529,6 +529,27 @@ Short me jawab dunga — detail chahiye to bol dena. Hindi/Hinglish/English sab 
               models: p.models,
               hasKey: getProviderKeys(p.id).length > 0,
             })),
+            upstreamKeyStatus: (() => {
+              try {
+                const pools = getAllProviderKeys((providers || []).map((x) => x.id));
+                const all: string[] = [];
+                Object.values(pools).forEach((arr) => {
+                  if (Array.isArray(arr)) all.push(...arr);
+                });
+                return ["prov-gemini", "prov-groq", "prov-openrouter", "prov-cerebras"].map((up) => ({
+                  upstream: up,
+                  hasKey: all.some((k) => {
+                    if (up === "prov-gemini") return /^AIza[0-9A-Za-z\-_]{20,}/.test(k) || /^AQ\.[A-Za-z0-9\-_.]{40,}/.test(k);
+                    if (up === "prov-groq") return k.startsWith("gsk_");
+                    if (up === "prov-openrouter") return k.startsWith("sk-or-");
+                    if (up === "prov-cerebras") return k.startsWith("csk-");
+                    return false;
+                  }),
+                }));
+              } catch {
+                return [];
+              }
+            })(),
             providers: providers.map((p) => ({
               id: p.id,
               name: p.name,
