@@ -13,9 +13,9 @@ export const UNIVERSAL_MODELS: string[] = [
   'llama-3.3-70b-versatile',
   'mixtral-8x7b-32768',
   'gemma2-9b-it',
-  'openai/gpt-4o-mini',
-  'meta-llama/llama-3.3-70b-instruct',
-  'anthropic/claude-3.5-haiku',
+  'google/gemma-4-31b-it:free',
+  'nex-agi/nex-n2.5-mini:free',
+  'liquid/lfm-2.5-2.6b:free',
   'llama-3.3-70b',
   'llama3.1-8b',
 ];

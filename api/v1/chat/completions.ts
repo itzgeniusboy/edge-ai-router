@@ -77,7 +77,7 @@ async function isMasterRevoked(mid: string): Promise<boolean> {
 const UPSTREAMS: Record<string, { name: string; baseUrl: string; defaultModel: string }> = {
   "prov-gemini": { name: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", defaultModel: "gemini-flash-latest" },
   "prov-groq": { name: "Groq", baseUrl: "https://api.groq.com/openai/v1", defaultModel: "llama-3.3-70b-versatile" },
-  "prov-openrouter": { name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", defaultModel: "openai/gpt-4o-mini" },
+  "prov-openrouter": { name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", defaultModel: "google/gemma-4-31b-it:free" },
   "prov-cerebras": { name: "Cerebras", baseUrl: "https://api.cerebras.ai/v1", defaultModel: "llama-3.3-70b" },
 };
 
@@ -91,9 +91,9 @@ const MODEL_UPSTREAM: Record<string, string> = {
   "llama-3.3-70b-versatile": "prov-groq",
   "mixtral-8x7b-32768": "prov-groq",
   "gemma2-9b-it": "prov-groq",
-  "openai/gpt-4o-mini": "prov-openrouter",
-  "meta-llama/llama-3.3-70b-instruct": "prov-openrouter",
-  "anthropic/claude-3.5-haiku": "prov-openrouter",
+  "google/gemma-4-31b-it:free": "prov-openrouter",
+  "nex-agi/nex-n2.5-mini:free": "prov-openrouter",
+  "liquid/lfm-2.5-2.6b:free": "prov-openrouter",
   "llama-3.3-70b": "prov-cerebras",
   "llama3.1-8b": "prov-cerebras",
 };

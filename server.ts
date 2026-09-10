@@ -38,7 +38,7 @@ function resolvePublicUserKey(req: any): string {
 const UPSTREAMS: Record<string, { name: string; baseUrl: string; defaultModel: string }> = {
   "prov-gemini": { name: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", defaultModel: "gemini-flash-latest" },
   "prov-groq": { name: "Groq", baseUrl: "https://api.groq.com/openai/v1", defaultModel: "llama-3.3-70b-versatile" },
-  "prov-openrouter": { name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", defaultModel: "openai/gpt-4o-mini" },
+  "prov-openrouter": { name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", defaultModel: "google/gemma-4-31b-it:free" },
   "prov-cerebras": { name: "Cerebras", baseUrl: "https://api.cerebras.ai/v1", defaultModel: "llama-3.3-70b" },
 };
 
@@ -52,9 +52,9 @@ const MODEL_UPSTREAM: Record<string, string> = {
   "llama-3.3-70b-versatile": "prov-groq",
   "mixtral-8x7b-32768": "prov-groq",
   "gemma2-9b-it": "prov-groq",
-  "openai/gpt-4o-mini": "prov-openrouter",
-  "meta-llama/llama-3.3-70b-instruct": "prov-openrouter",
-  "anthropic/claude-3.5-haiku": "prov-openrouter",
+  "google/gemma-4-31b-it:free": "prov-openrouter",
+  "nex-agi/nex-n2.5-mini:free": "prov-openrouter",
+  "liquid/lfm-2.5-2.6b:free": "prov-openrouter",
   "llama-3.3-70b": "prov-cerebras",
   "llama3.1-8b": "prov-cerebras",
 };
@@ -327,9 +327,9 @@ const UNIVERSAL_MODELS_LOCAL: { id: string; upstream: string }[] = [
   { id: "llama-3.3-70b-versatile", upstream: "prov-groq" },
   { id: "mixtral-8x7b-32768", upstream: "prov-groq" },
   { id: "gemma2-9b-it", upstream: "prov-groq" },
-  { id: "openai/gpt-4o-mini", upstream: "prov-openrouter" },
-  { id: "meta-llama/llama-3.3-70b-instruct", upstream: "prov-openrouter" },
-  { id: "anthropic/claude-3.5-haiku", upstream: "prov-openrouter" },
+  { id: "google/gemma-4-31b-it:free", upstream: "prov-openrouter" },
+  { id: "nex-agi/nex-n2.5-mini:free", upstream: "prov-openrouter" },
+  { id: "liquid/lfm-2.5-2.6b:free", upstream: "prov-openrouter" },
   { id: "llama-3.3-70b", upstream: "prov-cerebras" },
   { id: "llama3.1-8b", upstream: "prov-cerebras" },
 ];
@@ -964,8 +964,15 @@ app.post("/api/catalog/sync", async (req, res) => {
             if (!id) continue;
             const outMods: string[] = Array.isArray(m?.architecture?.output_modalities) ? m.architecture.output_modalities : [];
             if (outMods.length > 0 && !outMods.includes("text")) continue;
-            if (/embedding/i.test(id)) continue;
-            models.push({ id, name: typeof m?.name === "string" && m.name ? m.name : id, upstream: "prov-openrouter" });
+            if (/embedding|audio|video|image|tts|whisper|lyria/i.test(id)) continue;
+            // FREE-ONLY: pricing present hai to prompt+completion dono 0 (paid bahar)
+            const pr = m?.pricing;
+            if (pr && typeof pr === "object") {
+              const pp = Number((pr as any).prompt);
+              const pc = Number((pr as any).completion);
+              if (!Number.isFinite(pp) || !Number.isFinite(pc) || pp !== 0 || pc !== 0) continue;
+            }
+            models.push({ id, name: typeof m?.name === "string" && m.name ? m.name : id, upstream: "prov-openrouter", free: true });
             if (models.length >= 150) break;
           }
           return { ok: true as const, models };

@@ -7,6 +7,7 @@ export interface LiveModel {
   id: string;
   name: string;
   upstream: string;
+  free?: boolean;
 }
 
 export interface LiveCatalog {

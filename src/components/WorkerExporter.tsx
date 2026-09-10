@@ -718,8 +718,8 @@ function selectEndpoint(nodes: RegionalEndpoint[]): RegionalEndpoint {
                 desc: 'Ultra-fast (Groq auto-route)',
               },
               {
-                id: 'openai/gpt-4o-mini',
-                title: 'openai/gpt-4o-mini',
+                id: 'google/gemma-4-31b-it:free',
+                title: 'google/gemma-4-31b-it:free',
                 desc: 'Via OpenRouter auto-route',
               },
             ].map((preset) => (
