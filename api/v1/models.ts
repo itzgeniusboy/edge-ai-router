@@ -1,6 +1,55 @@
 // OpenAI-compatible model list — FULLY SELF-CONTAINED (no cross-file imports).
 // GET /api/v1/models -> { object: "list", data: [{ id, object: "model", ... }] }.
 // External clients (Nexus / OpenCode / Cursor / LibreChat) isi se switch-model list bharte hai.
+// Master key (er1.) di to validate hoti hai (invalid/expired -> 401) aur uske
+// pools ke upstreams available:true milte hai — Nexus key-check isi pe chalta hai.
+import crypto from "node:crypto";
+import { inflateSync } from "node:zlib";
+
+const MASTER_PREFIX = "er1.";
+
+function masterSecret(): Buffer {
+  return crypto
+    .createHash("sha256")
+    .update(process.env.MASTER_KEY_SECRET || "er-dev-fallback-secret-v1-do-not-use-in-prod")
+    .digest();
+}
+
+function tryMasterDecrypt(token: string): { ok: boolean; code?: string; payload?: any } {
+  try {
+    const raw = Buffer.from(token.slice(MASTER_PREFIX.length), "base64url");
+    if (raw.length < 29) return { ok: false, code: "BAD_MASTER" };
+    const iv = raw.subarray(0, 12);
+    const tag = raw.subarray(raw.length - 16);
+    const ct = raw.subarray(12, raw.length - 16);
+    const d = crypto.createDecipheriv("aes-256-gcm", masterSecret(), iv);
+    d.setAuthTag(tag);
+    const payload = JSON.parse(inflateSync(Buffer.concat([d.update(ct), d.final()])).toString("utf8"));
+    if (!payload || payload.v !== 1 || typeof payload.exp !== "number" || typeof payload.keys !== "object") {
+      return { ok: false, code: "BAD_MASTER" };
+    }
+    if (payload.exp <= Date.now()) return { ok: false, code: "EXPIRED" };
+    return { ok: true, payload };
+  } catch {
+    return { ok: false, code: "BAD_MASTER" };
+  }
+}
+
+function extractMaster(req: any): string {
+  const cands = [
+    req.headers?.["x-master-key"],
+    (() => {
+      const h = typeof req.headers?.authorization === "string" ? req.headers.authorization : "";
+      const m = h.match(/^Bearer\s*(.*)$/i);
+      return m ? m[1] : h;
+    })(),
+    Array.isArray(req.query?.key) ? req.query.key[0] : req.query?.key,
+  ];
+  for (const c of cands) {
+    if (typeof c === "string" && c.trim().startsWith(MASTER_PREFIX)) return c.trim();
+  }
+  return "";
+}
 const UNIVERSAL_MODELS: { id: string; upstream: string }[] = [
   { id: "gemini-flash-latest", upstream: "prov-gemini" },
   { id: "gemini-3.6-flash", upstream: "prov-gemini" },
@@ -53,6 +102,38 @@ export default async function handler(req: any, res: any) {
   }
   const now = Math.floor(Date.now() / 1000);
   const ups = callerUpstreams(req);
+  // Master key di hai to validate karo (Nexus key-check): galat/expire -> 401.
+  // Sahi hai to uske pools ke upstreams bhi available:true.
+  const masterTok = extractMaster(req);
+  if (masterTok) {
+    const chk = tryMasterDecrypt(masterTok);
+    if (!chk.ok) {
+      return res.status(401).json({
+        error: {
+          message: chk.code === "EXPIRED" ? "Master key expire ho gayi — Regenerate karo." : "Master key invalid hai.",
+          type: "authentication_error",
+        },
+      });
+    }
+    const set = ups || new Set<string>();
+    Object.keys(chk.payload.keys || {}).forEach((pid) => {
+      const arr = chk.payload.keys[pid];
+      if (Array.isArray(arr) && arr.length > 0) set.add(pid);
+    });
+    // Legacy pool ids (prov-gemini etc.) bhi chalenge — upstream mapping neeche.
+    return res.json({
+      object: "list",
+      data: UNIVERSAL_MODELS.map((m) => ({
+        id: m.id,
+        object: "model",
+        created: now,
+        owned_by: "edge-router",
+        upstream: m.upstream,
+        gateway: "Edge Router",
+        available: set.has(m.upstream) || set.has("Edge Router") || set.has("prov-universal"),
+      })),
+    });
+  }
   return res.json({
     object: "list",
     data: UNIVERSAL_MODELS.map((m) => ({
