@@ -61,7 +61,7 @@ export default async function handler(req: any, res: any) {
       created: now,
       owned_by: "edge-router",
       upstream: m.upstream,
-      gateway: "prov-universal",
+      gateway: "Edge Router",
       ...(ups ? { available: ups.has(m.upstream) } : {}),
     })),
   });

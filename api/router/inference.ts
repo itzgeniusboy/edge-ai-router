@@ -142,7 +142,7 @@ export default async function handler(req: any, res: any) {
             isLive: true,
             response: text,
             modelUsed: data.model || wanted,
-            providerId: "prov-universal",
+            providerId: "Edge Router",
             providerName: up.name,
             upstreamId: upId === "unknown" ? target || "prov-gemini" : upId,
             keyIndex: i,

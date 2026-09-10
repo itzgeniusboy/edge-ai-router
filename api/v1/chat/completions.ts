@@ -7,7 +7,7 @@ import crypto from "node:crypto";
 import { inflateSync } from "node:zlib";
 
 const MASTER_PREFIX = "er1.";
-const UNIVERSAL_ID = "prov-universal";
+const UNIVERSAL_ID = "Edge Router";
 
 function masterSecret(): Buffer {
   return crypto

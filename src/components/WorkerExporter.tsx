@@ -197,7 +197,7 @@ export const WorkerExporter: React.FC<WorkerExporterProps> = ({
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer ${displayKey}" \\
   -d '{
-    "providerId": "prov-universal",
+    "providerId": "Edge Router",
     "model": "${proxyModel}",
     "messages": [
       {"role": "user", "content": "Hello! Explain quantum computing in 2 sentences."}
@@ -219,7 +219,7 @@ response = client.chat.completions.create(
         {"role": "user", "content": "How do edge distributed systems handle failovers?"}
     ],
     temperature=0.7,
-    extra_body={"providerId": "prov-universal"},
+    extra_body={"providerId": "Edge Router"},
 )
 
 print(response.choices[0].message.content)`,
@@ -239,7 +239,7 @@ async function main() {
       { role: "user", content: "Summarize edge routing." }
     ],
     // @ts-ignore site provider ID (optional — default bhi universal hai)
-    providerId: "prov-universal",
+    providerId: "Edge Router",
   } as any);
 
   console.log(completion.choices[0].message.content);
@@ -586,12 +586,12 @@ function selectEndpoint(nodes: RegionalEndpoint[]): RegionalEndpoint {
                   3. PROVIDER ID (jaha mange, yahi dalo)
                 </span>
                 <code className="text-xs sm:text-sm text-emerald-300 font-mono font-bold tracking-wide break-all select-all">
-                  prov-universal
+                  Edge Router
                 </code>
               </div>
               <button
                 type="button"
-                onClick={() => copyToClipboard('prov-universal', 'providerid')}
+                onClick={() => copyToClipboard('Edge Router', 'providerid')}
                 className="flex items-center justify-center gap-1 px-3 py-1.5 bg-neutral-100 hover:bg-white text-neutral-950 font-bold text-xs font-mono uppercase tracking-wider transition-colors flex-shrink-0 w-full sm:w-auto"
               >
                 {copiedType === 'providerid' ? (

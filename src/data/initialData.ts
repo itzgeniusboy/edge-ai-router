@@ -1,9 +1,9 @@
 import { Provider, Endpoint } from '../types/router';
 
-// UNIVERSAL MODE: ONE provider (prov-universal) — sab models, sab keys, auto-route.
+// UNIVERSAL MODE: ONE provider (Edge Router) — sab models, sab keys, auto-route.
 // Model naam se upstream select hota hai; providerId dene ki zaroorat nahi.
 // No hardcoded secrets: every key is per-user (KEYS UI / Copilot).
-// Pool: er_api_keys_prov-universal (key prefix se upstream auto-detect).
+// Pool: er_api_keys_Edge Router (key prefix se upstream auto-detect).
 
 export const UNIVERSAL_MODELS: string[] = [
   'gemini-flash-latest',
@@ -22,7 +22,7 @@ export const UNIVERSAL_MODELS: string[] = [
 
 export const INITIAL_PROVIDERS: Provider[] = [
   {
-    id: 'prov-universal',
+    id: 'Edge Router',
     name: 'Edge Router',
     slug: 'edge-router-universal',
     category: 'LLM & Multimodal',
@@ -35,7 +35,7 @@ export const INITIAL_PROVIDERS: Provider[] = [
 export const INITIAL_ENDPOINTS: Endpoint[] = [
   {
     id: 'ep-universal-anycast',
-    providerId: 'prov-universal',
+    providerId: 'Edge Router',
     name: 'Universal Gateway',
     region: 'global-anycast',
     regionLabel: 'Global Anycast',
@@ -55,7 +55,7 @@ export const INITIAL_ENDPOINTS: Endpoint[] = [
   },
 ];
 
-export const INITIAL_FALLBACK_CHAIN: string[] = ['prov-universal'];
+export const INITIAL_FALLBACK_CHAIN: string[] = ['Edge Router'];
 
 export const INITIAL_DAILY_USAGES: Record<string, {
   requestsUsed: number;
@@ -64,7 +64,7 @@ export const INITIAL_DAILY_USAGES: Record<string, {
   tokensLimit: number;
   primaryUnit: 'requests' | 'tokens';
 }> = {
-  'prov-universal': {
+  'Edge Router': {
     requestsUsed: 0,
     requestsLimit: 10000,
     tokensUsed: 0,

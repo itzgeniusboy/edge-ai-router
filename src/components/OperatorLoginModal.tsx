@@ -55,7 +55,7 @@ export const OperatorLoginModal: React.FC<OperatorLoginModalProps> = ({
       saveUsers(users);
       setSession(u);
       localStorage.setItem('er_gemini_key', k);
-      try { addProviderKey('prov-gemini', k); } catch { /* ignore */ }
+      try { addProviderKey('Edge Router', k); } catch { /* ignore */ }
       onLoginSuccess(u, k);
       onClose();
     } finally {
@@ -78,7 +78,7 @@ export const OperatorLoginModal: React.FC<OperatorLoginModalProps> = ({
       setSession(found.username);
       localStorage.setItem('er_operator_username', found.username);
       localStorage.setItem('er_gemini_key', found.geminiKey);
-      try { addProviderKey('prov-gemini', found.geminiKey); } catch { /* ignore */ }
+      try { addProviderKey('Edge Router', found.geminiKey); } catch { /* ignore */ }
       onLoginSuccess(found.username, found.geminiKey);
       onClose();
     } finally {

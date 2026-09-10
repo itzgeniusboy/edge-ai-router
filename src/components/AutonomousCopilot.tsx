@@ -200,10 +200,10 @@ Short me jawab dunga — detail chahiye to bol dena. Hindi/Hinglish/English sab 
   const executeAiActions = (text: string): string[] => {
     const executed: string[] = [];
 
-    // 1. [ACTION:SET_API_KEY:prov-id:apiKey]
-    const apiKeyMatch = text.match(/\[ACTION:SET_API_KEY:([a-zA-Z0-9_-]+):([^\]\s]+)\]/);
+    // 1. [ACTION:SET_API_KEY:prov-id:apiKey] (id me space allowed: "Edge Router")
+    const apiKeyMatch = text.match(/\[ACTION:SET_API_KEY:([a-zA-Z0-9_\- ]+):([^\]\s]+)\]/);
     if (apiKeyMatch && apiKeyMatch[1] && apiKeyMatch[2]) {
-      const provId = apiKeyMatch[1];
+      const provId = apiKeyMatch[1].trim();
       const keyVal = apiKeyMatch[2];
       if (onSetApiKey) {
         onSetApiKey(provId, keyVal);
@@ -217,16 +217,16 @@ Short me jawab dunga — detail chahiye to bol dena. Hindi/Hinglish/English sab 
     if (geminiKeyMatch && geminiKeyMatch[1]) {
       const keyVal = geminiKeyMatch[1];
       if (onSetApiKey) {
-        onSetApiKey('prov-gemini', keyVal);
+        onSetApiKey('Edge Router', keyVal);
       }
       localStorage.setItem('er_gemini_key', keyVal);
       executed.push('Saved & activated Gemini API Key for Edge Router & Copilot');
     }
 
-    // 3. [ACTION:SWITCH_PROVIDER:prov-cerebras]
-    const providerMatch = text.match(/\[ACTION:SWITCH_PROVIDER:([a-zA-Z0-9_-]+)\]/);
+    // 3. [ACTION:SWITCH_PROVIDER:Edge Router]
+    const providerMatch = text.match(/\[ACTION:SWITCH_PROVIDER:([a-zA-Z0-9_\- ]+)\]/);
     if (providerMatch && providerMatch[1]) {
-      const targetProvId = providerMatch[1];
+      const targetProvId = providerMatch[1].trim();
       const found = providers.find((p) => p.id === targetProvId);
       if (found) {
         onSelectProvider(targetProvId);
