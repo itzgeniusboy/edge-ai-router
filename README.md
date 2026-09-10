@@ -19,6 +19,43 @@ hai `/usr/bin/env` missing ki wajah se — `node ./node_modules/...` full path u
 GitHub push → Vercel auto-deploy. Koi env/DB setup nahi chahiye.
 `vercel.json` me `/api/*` serverless functions + baaki static SPA hai.
 
+## Nexus se connect (koi bhi user, 2 minute)
+
+> Note: Nexus config har user ki **apni machine pe local** hoti hai — GitHub se
+> Nexus setup karne pe Edge Router option **khud nahi aayega**. Neeche steps se add karo.
+
+1. Site kholo → signup/login → **KEYS** me provider keys dalo → **Export** tab →
+   **GENERATE MY KEY** (apni UNIQUE `er1...` master key copy karo — har user ki alag).
+2. Nexus me provider add karo — **Provider id:** `edge-router`, **API key:** tumhari master key.
+   (Ye sirf credential store karta hai.)
+3. `~/.config/nexus/nexus.jsonc` me ye block add karo (same `edge-router` id!):
+
+```json
+{
+  "$schema": "https://nexus.ai/config.json",
+  "provider": {
+    "edge-router": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Edge Router (universal)",
+      "options": {
+        "baseURL": "https://edge-ai-router.vercel.app/api/v1"
+      },
+      "models": {
+        "gemini-flash-latest": { "name": "Gemini Flash (Edge Router)" },
+        "gemini-3.6-flash": { "name": "Gemini 3.6 Flash (Edge Router)" },
+        "gemini-pro-latest": { "name": "Gemini Pro (Edge Router)" },
+        "gemini-flash-lite-latest": { "name": "Gemini Flash Lite (Edge Router)" }
+      }
+    }
+  }
+}
+```
+
+4. Nexus **restart** karo → provider list me `edge-router` → switch-model me models.
+5. **Sirf wahi models rakho jinki key hai:** Groq/OpenRouter/Cerebras ki key milte hi
+   unke models upar `models` me add kar do (free wale — OpenRouter `pricing=0` check
+   karke). Key hatao to uske models bhi hata do, nahi to dead dikhenge.
+
 ## ONE universal provider — official ID: `Edge Router`
 
 Jaha bhi provider ID dalni pade (request body, client config, Copilot actions),
