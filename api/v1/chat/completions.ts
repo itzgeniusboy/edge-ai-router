@@ -316,6 +316,7 @@ export default async function handler(req: any, res: any) {
         const promptTokens = usage.prompt_tokens ?? openaiMessages.reduce((acc: number, m: any) => acc + Math.ceil((m.content || "").length / 4), 0);
         const completionTokens = usage.completion_tokens ?? Math.ceil(responseText.length / 4);
         const servedId = customBase ? "custom" : upId === "unknown" ? (target || "prov-gemini") : upId;
+        res.setHeader("X-Edge-Provider", UNIVERSAL_ID);
         res.setHeader("X-Edge-Upstream", servedId);
         res.setHeader("X-Edge-Key-Index", String(i));
         res.setHeader("X-Edge-Keys-Tried", String(i + 1));
@@ -340,8 +341,9 @@ export default async function handler(req: any, res: any) {
           },
           edge_routing: {
             provider: customBase ? "Custom" : UPSTREAMS[servedId]?.name || servedId,
-            provider_id: servedId,
-            gateway: UNIVERSAL_ID,
+            // Canonical site provider ID — jaha ID dalni ho, yahi dalo:
+            provider_id: UNIVERSAL_ID,
+            upstream_id: servedId,
             key_index: i,
             key_prefix: typeof ordered[i] === "string" ? ordered[i].slice(0, 8) : "",
             keys_tried: i + 1,
