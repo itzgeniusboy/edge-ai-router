@@ -225,6 +225,9 @@ export default function App() {
   });
 
   const [activeTab, setActiveTab] = useState<'dashboard' | 'tester' | 'quota' | 'telemetry' | 'export' | 'monitor'>('dashboard');
+  const [uiMode, setUiMode] = useState<'beginner' | 'advanced'>(() => (
+    localStorage.getItem('er_ui_mode') === 'advanced' ? 'advanced' : 'beginner'
+  ));
   const [isHealthSweeping, setIsHealthSweeping] = useState(false);
   const [isAddEndpointOpen, setIsAddEndpointOpen] = useState(false);
   const [editingEndpoint, setEditingEndpoint] = useState<Endpoint | null>(null);
@@ -435,6 +438,10 @@ export default function App() {
     localStorage.setItem('er_watchdog_logs', JSON.stringify(watchdogLogs.slice(0, 50)));
   }, [watchdogLogs]);
 
+  useEffect(() => {
+    localStorage.setItem('er_ui_mode', uiMode);
+  }, [uiMode]);
+
   const activeProvider =
     providers.find((p) => p.id === activeProviderId) || providers[0] || INITIAL_PROVIDERS[0];
 
@@ -611,6 +618,16 @@ export default function App() {
     notify('success', `Provider added: ${newProvider.name}`, 'Ab Provider Keys me iski key dalo.');
   };
 
+  const handleApplyRecommendedSetup = () => {
+    setRoutingPolicy('failover-cascade');
+    setEndpoints((prev) => prev.map((endpoint) => ({
+      ...endpoint,
+      enabled: true,
+      priorityTier: endpoint.priorityTier < 2 ? endpoint.priorityTier : 2,
+    })));
+    notify('success', 'Recommended setup applied', 'Failover protection on hai aur available nodes active kar diye gaye.');
+  };
+
   const handleRunHealthSweep = async () => {
     setIsHealthSweeping(true);
     notify('info', 'Running live probe', 'Measuring real round-trip latency to the gateway.');
@@ -781,6 +798,9 @@ export default function App() {
               onOpenTester={() => setActiveTab('tester')}
               onOpenKeys={() => setIsKeysOpen(true)}
               onOpenConnect={() => setActiveTab('export')}
+              uiMode={uiMode}
+              onToggleUiMode={() => setUiMode((mode) => mode === 'beginner' ? 'advanced' : 'beginner')}
+              onApplyRecommendedSetup={handleApplyRecommendedSetup}
               onOpenQuota={() => setActiveTab('quota')}
               providers={providers}
               fallbackChain={fallbackChain}

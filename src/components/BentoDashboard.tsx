@@ -40,6 +40,9 @@ interface BentoDashboardProps {
   onOpenTester: () => void;
   onOpenKeys?: () => void;
   onOpenConnect?: () => void;
+  uiMode: 'beginner' | 'advanced';
+  onToggleUiMode: () => void;
+  onApplyRecommendedSetup: () => void;
   onOpenQuota?: () => void;
   isWatchdogActive?: boolean;
   onToggleWatchdog?: () => void;
@@ -62,6 +65,9 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
   onOpenTester,
   onOpenKeys,
   onOpenConnect,
+  uiMode,
+  onToggleUiMode,
+  onApplyRecommendedSetup,
   onOpenQuota,
   isWatchdogActive = true,
   onToggleWatchdog,
@@ -159,7 +165,17 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
             <p className="ui-eyebrow">Quick start</p>
             <h2 id="next-steps-title" className="mt-1 text-sm font-bold text-white">Get your first request running</h2>
           </div>
-          <span className="text-[11px] text-neutral-500">Three simple steps — no routing knowledge needed.</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={onApplyRecommendedSetup} className="ui-btn ui-btn-sm ui-btn-primary">
+              <Zap className="h-3.5 w-3.5" /> Use recommended setup
+            </button>
+            <button type="button" onClick={onToggleUiMode} className="ui-btn ui-btn-sm ui-btn-ghost" aria-pressed={uiMode === 'advanced'}>
+              {uiMode === 'beginner' ? 'Advanced mode' : 'Beginner mode'}
+            </button>
+          </div>
+        </div>
+        <div className="px-4 py-2.5 text-[11px] text-neutral-500 sm:px-5">
+          {uiMode === 'beginner' ? 'Simple mode is on — self-healing details stay out of your way.' : 'Advanced mode is on — self-healing controls and live diagnostics are visible.'}
         </div>
         <div className="grid gap-px bg-white/8 sm:grid-cols-3">
           {[
@@ -223,6 +239,8 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
         )}
       </div>
 
+      {uiMode === 'advanced' && (
+      <>
       {/* Autonomous Self-Driving Watchdog Control & Live Event Ticker */}
       <div className="bg-neutral-900/80 border border-neutral-800 p-4 sm:p-5 space-y-4 relative overflow-hidden">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-neutral-800/80 pb-4">
@@ -324,6 +342,8 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
           </div>
         </div>
       </div>
+      </>
+      )}
 
       {/* Asymmetric Bento-Grid Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
