@@ -21,12 +21,12 @@ import { Provider } from '../types/router';
 type TabId = 'dashboard' | 'tester' | 'quota' | 'telemetry' | 'export' | 'monitor';
 
 const NAV_TABS: { id: TabId; label: string; Icon: typeof Layers }[] = [
-  { id: 'dashboard', label: 'NODES', Icon: Layers },
-  { id: 'tester', label: 'TESTER', Icon: Terminal },
+  { id: 'dashboard', label: 'OVERVIEW', Icon: Layers },
+  { id: 'tester', label: 'TEST REQUEST', Icon: Terminal },
   { id: 'quota', label: 'QUOTA', Icon: Flame },
   { id: 'telemetry', label: 'METRICS', Icon: Activity },
-  { id: 'export', label: 'CONNECT', Icon: Plug },
-  { id: 'monitor', label: 'MONITOR', Icon: Radar },
+  { id: 'export', label: 'CONNECT APP', Icon: Plug },
+  { id: 'monitor', label: 'KEY HEALTH', Icon: Radar },
 ];
 
 interface NavbarProps {

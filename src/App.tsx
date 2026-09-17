@@ -779,6 +779,8 @@ export default function App() {
               }}
               recentDecisions={recentDecisions}
               onOpenTester={() => setActiveTab('tester')}
+              onOpenKeys={() => setIsKeysOpen(true)}
+              onOpenConnect={() => setActiveTab('export')}
               onOpenQuota={() => setActiveTab('quota')}
               providers={providers}
               fallbackChain={fallbackChain}

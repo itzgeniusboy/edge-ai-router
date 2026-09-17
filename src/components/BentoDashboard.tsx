@@ -38,6 +38,8 @@ interface BentoDashboardProps {
   onOpenAddEndpoint: () => void;
   recentDecisions: RoutingDecision[];
   onOpenTester: () => void;
+  onOpenKeys?: () => void;
+  onOpenConnect?: () => void;
   onOpenQuota?: () => void;
   isWatchdogActive?: boolean;
   onToggleWatchdog?: () => void;
@@ -58,6 +60,8 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
   onOpenAddEndpoint,
   recentDecisions,
   onOpenTester,
+  onOpenKeys,
+  onOpenConnect,
   onOpenQuota,
   isWatchdogActive = true,
   onToggleWatchdog,
@@ -147,6 +151,37 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
           )}
         </div>
       </PageHeader>
+
+      {/* Plain-language next steps: keep the powerful control room approachable. */}
+      <section className="ui-card overflow-hidden" aria-labelledby="next-steps-title">
+        <div className="flex flex-col gap-3 border-b border-white/8 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          <div>
+            <p className="ui-eyebrow">Quick start</p>
+            <h2 id="next-steps-title" className="mt-1 text-sm font-bold text-white">Get your first request running</h2>
+          </div>
+          <span className="text-[11px] text-neutral-500">Three simple steps — no routing knowledge needed.</span>
+        </div>
+        <div className="grid gap-px bg-white/8 sm:grid-cols-3">
+          {[
+            { n: '01', title: 'Add an API key', body: 'Save a provider key in your local key pool.', action: onOpenKeys, cta: 'Open Keys' },
+            { n: '02', title: 'Send a test', body: 'Check that routing and failover work.', action: onOpenTester, cta: 'Test now' },
+            { n: '03', title: 'Connect your app', body: 'Copy a ready-made config for your client.', action: onOpenConnect, cta: 'Open Connect' },
+          ].map((item) => (
+            <div key={item.n} className="bg-[#0d1016] p-4">
+              <div className="flex items-start justify-between gap-3">
+                <span className="font-mono text-[11px] font-bold text-emerald-300">{item.n}</span>
+                {item.action && (
+                  <button type="button" onClick={item.action} className="text-[11px] font-semibold text-cyan-300 transition-colors hover:text-white">
+                    {item.cta} <span aria-hidden>→</span>
+                  </button>
+                )}
+              </div>
+              <h3 className="mt-3 text-[13px] font-bold text-white">{item.title}</h3>
+              <p className="mt-1 text-[11.5px] leading-relaxed text-neutral-500">{item.body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
 
       {/* Measured gateway telemetry — real round-trips, never simulated. */}
       <LiveStatusStrip />
