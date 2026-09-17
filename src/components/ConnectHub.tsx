@@ -90,6 +90,7 @@ export const ConnectHub: React.FC<ConnectHubProps> = ({
   const [client, setClient] = useState<ClientId>('claude-code');
   const [model, setModel] = useState('gemini-flash-latest');
   const [customModelInput, setCustomModelInput] = useState('');
+  const [activeModelIds, setActiveModelIds] = useState<string[]>([]);
   const [ceTick, setCeTick] = useState(0);
   const [draft, setDraft] = useState({ name: '', baseUrl: '', key: '', model: '', tag: '' });
   const [ceError, setCeError] = useState('');
@@ -132,6 +133,27 @@ export const ConnectHub: React.FC<ConnectHubProps> = ({
     enabledCustoms.forEach((c) => { if (c.model && !ids.includes(c.model)) ids.push(c.model); });
     return ids;
   }, [enabledCustoms, keysTick]);
+
+  const activeModels = activeModelIds.length > 0
+    ? allModels.filter((id) => activeModelIds.includes(id))
+    : allModels;
+
+  const activateAllCurrentModels = () => {
+    setActiveModelIds(allModels);
+    if (!allModels.includes(model)) setModel(allModels[0] || 'gemini-flash-latest');
+    setCustomModelInput('');
+    notify('success', 'All current models activated', `${allModels.length} models ab ek saath available hain.`);
+  };
+
+  const toggleModel = (id: string) => {
+    setActiveModelIds((prev) => {
+      const current = prev.length > 0 ? prev : allModels;
+      const next = current.includes(id) ? current.filter((x) => x !== id) : [...current, id];
+      return next.length === allModels.length ? [] : next;
+    });
+    setCustomModelInput('');
+    setModel(id);
+  };
 
   const catalogProvenance = useMemo(() => resolveModelCatalog(UNIVERSAL_MODELS, upstreamForModel), [keysTick]);
 
@@ -751,14 +773,14 @@ console.log(text);`,
                 </span>
               )}
             </span>
-            <select
-              value={customModelInput ? '__custom' : model}
-              onChange={(e) => { if (e.target.value === '__custom') { setCustomModelInput('my-model'); } else { setCustomModelInput(''); setModel(e.target.value); } }}
+              <select
+                value={customModelInput ? '__custom' : model}
+                onChange={(e) => { if (e.target.value === '__custom') { setCustomModelInput('my-model'); } else { setCustomModelInput(''); setModel(e.target.value); } }}
               className="min-w-0 flex-1 rounded-lg border border-white/10 bg-neutral-900 px-3 py-2 font-mono text-xs text-white outline-none focus:border-emerald-400/60"
             >
               {(() => {
                 const byUp = new Map<string, string[]>();
-                allModels.forEach((m) => {
+                activeModels.forEach((m) => {
                   const up = catalogProvenance.models.find((x) => x.id === m)?.upstream || 'other';
                   const arr = byUp.get(up) || [];
                   arr.push(m);
@@ -773,6 +795,14 @@ console.log(text);`,
               })()}
               <option value="__custom">✎ custom model id...</option>
             </select>
+            <button
+              type="button"
+              onClick={activateAllCurrentModels}
+              className="inline-flex flex-shrink-0 items-center justify-center gap-1.5 rounded-lg border border-emerald-400/30 bg-emerald-400/10 px-3 py-2 text-[10px] font-extrabold uppercase tracking-wide text-emerald-200 transition-colors hover:bg-emerald-400/20"
+              title="Activate every model currently visible in the live catalog"
+            >
+              <Layers className="h-3.5 w-3.5" /> Activate all ({allModels.length})
+            </button>
             {customModelInput !== '' && (
               <input
                 value={customModelInput}
@@ -782,9 +812,29 @@ console.log(text);`,
               />
             )}
           </div>
+          <div className="mb-3 rounded-xl border border-white/10 bg-black/25 p-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-neutral-400">Active model pool</p>
+                <p className="mt-0.5 text-[11px] text-neutral-500">Ek-ek karke select karne ki zaroorat nahi — current catalog ke saare models ek saath active kar sakte ho.</p>
+              </div>
+              <span className="ui-badge ui-badge-success">{activeModels.length}/{allModels.length} active</span>
+            </div>
+            <div className="flex max-h-24 flex-wrap gap-1.5 overflow-y-auto">
+              {allModels.slice(0, 18).map((id) => {
+                const active = activeModels.includes(id);
+                return (
+                  <button key={id} type="button" onClick={() => toggleModel(id)} className={`rounded-lg border px-2 py-1 text-[10px] font-mono transition-colors ${active ? 'border-emerald-400/40 bg-emerald-400/10 text-emerald-200' : 'border-white/10 bg-white/[0.02] text-neutral-500 hover:text-neutral-300'}`} aria-pressed={active}>
+                    {active ? '✓ ' : ''}{id}
+                  </button>
+                );
+              })}
+              {allModels.length > 18 && <span className="self-center text-[10px] text-neutral-600">+{allModels.length - 18} more — use Activate all</span>}
+            </div>
+          </div>
 
           {/* client tabs */}
-          <div className="mb-3 flex flex-wrap gap-1.5">
+          <div className="mb-3 flex flex-wrap items-center gap-1.5">
             {CLIENTS.map((c) => (
               <button
                 key={c.id}
@@ -796,6 +846,15 @@ console.log(text);`,
                 {c.icon} {c.label}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => doCopy(active.code, `config-${client}`)}
+              className="ml-auto inline-flex items-center gap-1.5 rounded-xl border border-emerald-400/40 bg-emerald-400/10 px-3 py-2 text-[11px] font-extrabold text-emerald-200 transition-colors hover:bg-emerald-400/20 sm:text-xs"
+              aria-label={`Copy ${CLIENTS.find((c) => c.id === client)?.label || 'current'} configuration`}
+            >
+              {copied === `config-${client}` ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              {copied === `config-${client}` ? 'Copied' : client === 'opencode' ? 'Copy JSON' : 'Copy config'}
+            </button>
           </div>
 
           <div className="grid gap-3 lg:grid-cols-5">
@@ -817,7 +876,7 @@ console.log(text);`,
                     <span className="h-2.5 w-2.5 rounded-full bg-rose-400/80" /><span className="h-2.5 w-2.5 rounded-full bg-amber-300/80" /><span className="h-2.5 w-2.5 rounded-full bg-emerald-400/80" />
                     <span className="ml-2 font-mono text-[10px] uppercase tracking-widest text-neutral-500">{CLIENTS.find((c) => c.id === client)?.label} · {active.lang}</span>
                   </div>
-                  <button type="button" onClick={() => doCopy(active.code, `snip-${client}`)} className="inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1.5 font-mono text-[10px] font-extrabold uppercase text-neutral-950 transition-transform hover:scale-[1.04]">
+                  <button type="button" onClick={() => doCopy(active.code, `snip-${client}`)} aria-label={`Copy ${CLIENTS.find((c) => c.id === client)?.label || 'current'} snippet`} className="inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1.5 font-mono text-[10px] font-extrabold uppercase text-neutral-950 transition-transform hover:scale-[1.04]">
                     {copied === `snip-${client}` ? <><Check className="h-3.5 w-3.5 text-emerald-600" /> Copied</> : <><Copy className="h-3.5 w-3.5" /> Copy</>}
                   </button>
                 </div>

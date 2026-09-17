@@ -244,7 +244,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Desktop / tablet tab navigation */}
           <nav
-            className="hidden lg:flex items-center gap-0.5 rounded-xl border border-white/8 bg-white/[0.03] p-1 flex-shrink-0"
+            className="hidden md:flex items-center gap-0.5 rounded-xl border border-white/8 bg-white/[0.03] p-1 flex-shrink-0 overflow-x-auto max-w-[48vw]"
             role="tablist"
             aria-label="Main sections"
           >

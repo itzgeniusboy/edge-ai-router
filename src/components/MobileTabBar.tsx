@@ -30,7 +30,7 @@ const TABS: { id: TabId; label: string; Icon: typeof Layers; hint: string }[] = 
  */
 export const MobileTabBar: React.FC<MobileTabBarProps> = ({ activeTab, onSelectTab, badges }) => {
   return (
-    <nav className="ui-tabbar sm:hidden" role="tablist" aria-label="Main sections">
+    <nav className="ui-tabbar md:hidden" role="tablist" aria-label="Main sections">
       {TABS.map(({ id, label, Icon, hint }) => {
         const active = activeTab === id;
         const badge = badges?.[id];
